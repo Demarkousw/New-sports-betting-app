@@ -3,7 +3,7 @@ import pandas as pd
 import requests
 from datetime import datetime
 
-st.title("Football Betting App — NFL Value Bets")
+st.title("Football Betting App — NFL Value Bets with Custom Odds")
 
 # --- Settings Sidebar ---
 st.sidebar.header("Betting Settings")
@@ -23,19 +23,13 @@ def fetch_odds(market):
         )
         response.raise_for_status()
         return response.json()
-    except requests.HTTPError as e:
-        st.warning(f"Market '{market}' not available: {e}")
+    except requests.HTTPError:
         return []
 
-# --- Fetch Odds in Layers ---
+# --- Fetch Odds ---
 st.info("Fetching NFL odds...")
 
-data_h2h = fetch_odds("h2h")
-data_spreads = fetch_odds("spreads")
-data_totals = fetch_odds("totals")
-
-# Combine data, fallback if needed
-data = data_h2h or data_spreads or data_totals
+data = fetch_odds("h2h")  # start with h2h (moneyline)
 if not data:
     st.error("No odds available. Try again later.")
     st.stop()
@@ -47,78 +41,75 @@ for game in data:
     away = game.get('away_team')
     game_time = datetime.fromisoformat(game['commence_time'].replace("Z",""))
 
-    ml_home = ml_away = spread_home = spread_away = total_over = total_under = None
-
+    ml_home = ml_away = None
     if game.get('bookmakers'):
         markets = game['bookmakers'][0].get('markets', [])
         for m in markets:
             if m['key'] == "h2h":
                 ml_home = m['outcomes'][0]['price']
                 ml_away = m['outcomes'][1]['price']
-            elif m['key'] == "spreads":
-                spread_home = m['outcomes'][0]['point']
-                spread_away = m['outcomes'][1]['point']
-            elif m['key'] == "totals":
-                total_over = m['outcomes'][0]['point']
-                total_under = m['outcomes'][1]['point']
 
     games.append({
         "home": home, "away": away, "game_time": game_time,
-        "ml_home": ml_home, "ml_away": ml_away,
-        "spread_home": spread_home, "spread_away": spread_away,
-        "over": total_over, "under": total_under
+        "ml_home": ml_home, "ml_away": ml_away
     })
 
 df = pd.DataFrame(games)
 
-# --- Simple Edge Calculation ---
-def simple_edge(price):
-    if price is None:
+# --- Custom Odds Input ---
+st.subheader("Add Your Own Odds for Each Team")
+custom_odds = {}
+for idx, row in df.iterrows():
+    matchup = f"{row['away']} @ {row['home']}"
+    my_home = st.number_input(f"My Odds for {row['home']} vs {row['away']} (e.g., -110)", value=0, key=f"home_{idx}")
+    my_away = st.number_input(f"My Odds for {row['away']} vs {row['home']} (e.g., -110)", value=0, key=f"away_{idx}")
+    custom_odds[matchup] = {"home": my_home, "away": my_away}
+
+# --- Edge Calculation ---
+def calc_edge(my_odds, market_odds):
+    """Positive edge = my line better than sportsbook line"""
+    if my_odds == 0 or market_odds is None:
         return 0
-    if price > 0:
-        implied = 100 / (price + 100)
-    else:
-        implied = -price / (-price + 100)
-    return 0.5 - implied
+    def to_prob(odds):
+        return 100/(odds+100) if odds>0 else -odds/(-odds+100)
+    my_prob = to_prob(my_odds)
+    market_prob = to_prob(market_odds)
+    return market_prob - my_prob  # positive = value
 
 # --- Generate Recommendations ---
 recommendations = []
 for idx, row in df.iterrows():
-    edges = {
-        "ML Home": simple_edge(row["ml_home"]),
-        "ML Away": simple_edge(row["ml_away"]),
-        "Over": row["over"] or 0,
-        "Under": row["under"] or 0
-    }
+    matchup = f"{row['away']} @ {row['home']}"
+    my_home = custom_odds[matchup]["home"]
+    my_away = custom_odds[matchup]["away"]
 
-    best_bet_type = max(edges, key=edges.get)
-    best_edge = edges[best_bet_type]
+    edge_home = calc_edge(my_home, row["ml_home"])
+    edge_away = calc_edge(my_away, row["ml_away"])
+
+    if edge_home > edge_away:
+        selection = row["home"]
+        best_edge = edge_home
+        opponent = row["away"]
+    else:
+        selection = row["away"]
+        best_edge = edge_away
+        opponent = row["home"]
+
     stake = bankroll * fractional_kelly * max(0, best_edge)
 
-    if "Home" in best_bet_type:
-        selection = row["home"]
-        opponent = row["away"]
-    elif "Away" in best_bet_type:
-        selection = row["away"]
-        opponent = row["home"]
-    else:
-        selection = best_bet_type
-        opponent = f"{row['away']} @ {row['home']}"
-
     recommendations.append({
-        "Matchup": f"{row['away']} @ {row['home']}",
+        "Matchup": matchup,
         "Selection": selection,
         "Opponent": opponent,
-        "Recommended Bet": best_bet_type,
         "Edge %": round(best_edge*100, 2),
         "Stake $": round(stake, 2)
     })
 
 # --- Show All Games ---
-st.subheader("All Games & Odds")
+st.subheader("All Games & Market Odds")
 st.dataframe(df)
 
 # --- Show Recommended Bets ---
-st.subheader("Recommended Value Bets (sorted by edge)")
+st.subheader("Recommended Bets (Sorted by Edge)")
 rec_df = pd.DataFrame(recommendations).sort_values(by="Edge %", ascending=False)
 st.dataframe(rec_df)
