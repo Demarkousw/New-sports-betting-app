@@ -51,8 +51,8 @@ bets_df = load_or_create_csv(BETS_LOG, BETS_COLS)
 # -------------------
 # APP HEADER
 # -------------------
-st.set_page_config(layout="wide", page_title="Sports Betting Assistant v2.4")
-st.title("Sports Betting Assistant v2.4 — Full Automation, Cross-Sport & Tracking")
+st.set_page_config(layout="wide", page_title="Sports Betting Assistant v2.5")
+st.title("Sports Betting Assistant v2.5 — Full Automation, Cross-Sport & Fantasy")
 
 # -------------------
 # SIDEBAR SETTINGS
@@ -125,7 +125,7 @@ def build_recommendations(games, sport_choice):
             game_time = datetime.fromisoformat(game["commence_time"].replace("Z","+00:00"))
 
             # Example stadium coords (replace with real coordinates if available)
-            lat, lon = 40.0, -75.0, 
+            lat, lon = 40.0, -75.0
             weather_str, temp, wind, desc = fetch_weather(lat, lon)
 
             bookmakers = game.get("bookmakers", [])
@@ -216,9 +216,14 @@ def build_recommendations(games, sport_choice):
 # -------------------
 # FETCH & BUILD
 # -------------------
-games = fetch_odds(SPORTS[sport_choice])
-recs_df = build_recommendations(games, sport_choice) if games else pd.DataFrame(columns=BETS_COLS)
-bets_df = pd.concat([bets_df, recs_df]).drop_duplicates(subset=["record_id"], keep="first").reset_index(drop=True)
+all_games = []
+for s in SPORTS.keys():
+    games = fetch_odds(SPORTS[s])
+    all_games.extend(build_recommendations(games, s).to_dict("records") if games else [])
+
+if all_games:
+    new_df = pd.DataFrame(all_games)
+    bets_df = pd.concat([bets_df, new_df]).drop_duplicates(subset=["record_id"], keep="first").reset_index(drop=True)
 
 # -------------------
 # COLOR-CODING
@@ -266,21 +271,15 @@ else:
     st.write("No parlays available with current settings.")
 
 # -------------------
-# CROSS-SPORT RANDOM PARLAYS
+# TRUE CROSS-SPORT RANDOM PARLAYS
 # -------------------
 st.subheader("Random Cross-Sport Parlays (MLB + NCAA + NFL)")
+all_top_bets = bets_df[(bets_df["status"]=="PENDING") & (bets_df["edge_pct"]>=2)]
+random_parlays = []
 
-cross_bets = []
-for s in SPORTS.keys():
-    sport_bets = bets_df[(bets_df["status"]=="PENDING") & (bets_df["sport"]==s) & (bets_df["edge_pct"]>=2)]
-    if not sport_bets.empty:
-        cross_bets.append(sport_bets.sample(min(2,len(sport_bets))))
-
-if cross_bets:
-    cross_bets_df = pd.concat(cross_bets).reset_index(drop=True)
-    random_parlays = []
+if not all_top_bets.empty:
     for _ in range(5):
-        combo = cross_bets_df.sample(min(3,len(cross_bets_df)))
+        combo = all_top_bets.sample(min(3, len(all_top_bets)))
         selections = combo["selection"].tolist()
         matchups = combo["matchup"].tolist()
         expected_edge = 1
@@ -294,12 +293,12 @@ if cross_bets:
         })
     st.dataframe(pd.DataFrame(random_parlays), use_container_width=True)
 else:
-    st.write("Not enough high-edge bets to create cross-sport parlays yet.")
+    st.write("Not enough high-edge bets across sports to create random cross-sport parlays.")
 
 # -------------------
 # DISPLAY W/L TABLE
 # -------------------
-st.header(f"{sport_choice} Bets Overview")
+st.header("All-Time Bets Overview")
 st.dataframe(bets_df.style.apply(style_row, axis=1), use_container_width=True)
 
 # -------------------
@@ -327,3 +326,31 @@ if not bets_df.empty:
     losses = len(bets_df[bets_df["status"]=="LOST"])
     st.subheader("All-Time Record")
     st.write(f"Wins: {wins} | Losses: {losses} | Total Bets: {wins + losses}")
+
+# -------------------
+# NFL FANTASY PROJECTIONS
+# -------------------
+st.subheader("NFL Fantasy Player Projections (Top 50)")
+def fetch_nfl_fantasy():
+    url = "https://api.sleeper.app/v1/players/nfl"
+    r = requests.get(url)
+    if r.status_code == 200:
+        data = r.json()
+        fantasy_df = pd.DataFrame([
+            {
+                "Player": p["full_name"],
+                "Team": p["team"],
+                "Position": p["position"],
+                "Fantasy Points": p.get("fantasy_points", None)
+            }
+            for p in data.values() if p.get("fantasy_points")
+        ])
+        return fantasy_df
+    else:
+        return pd.DataFrame()
+
+fantasy_df = fetch_nfl_fantasy()
+if not fantasy_df.empty:
+    st.dataframe(fantasy_df.sort_values("Fantasy Points", ascending=False).head(50), use_container_width=True)
+else:
+    st.write("No fantasy data available.")
