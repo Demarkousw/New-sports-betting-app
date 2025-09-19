@@ -2,60 +2,34 @@ import streamlit as st
 import pandas as pd
 import requests
 from datetime import datetime
-import kagglehub
-import zipfile
-import os
 
-st.title("NFL Betting App — Live Odds & Elo Recommendations")
+st.title("Live Sports Betting App — NFL & College Football")
 
 # --- Sidebar Settings ---
 bankroll = st.sidebar.number_input("Bankroll ($)", min_value=0, value=1000)
 fractional_kelly = st.sidebar.slider("Fractional Kelly", 0.1, 1.0, 0.5)
 base_elo = st.sidebar.number_input("Base Elo", 1000, 2000, 1500)
 k_factor = st.sidebar.number_input("K-Factor", 1, 50, 20)
+sport_choice = st.sidebar.selectbox("Select Sport", ["NFL", "College Football"])
 
-# --- Load Historical NFL Scores from Kaggle ---
-st.info("Downloading historical NFL scores...")
-dataset_path = kagglehub.dataset_download("flynn28/1926-2024-nfl-scores")
-zip_path = os.path.join(dataset_path, os.listdir(dataset_path)[0])
+# --- Base Elo Ratings ---
+# Expand as needed for both NFL and College teams
+if sport_choice == "NFL":
+    teams = ["Bills","Jets","Dolphins","Patriots","Cowboys","Giants",
+             "Packers","Bears","Ravens","Steelers","Seahawks","49ers",
+             "Falcons","Saints","Broncos","Raiders"]
+else:  # College Football
+    teams = ["Alabama","Georgia","Ohio State","Michigan","Texas","LSU",
+             "Oklahoma","Florida","Penn State","Notre Dame","Clemson","Iowa"]
 
-with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-    zip_ref.extractall("historical_data")
+elo_ratings = {team: base_elo for team in teams}
 
-csv_files = [f for f in os.listdir("historical_data") if f.endswith(".csv")]
-historical_games = pd.read_csv(os.path.join("historical_data", csv_files[0]))
-
-# Keep only necessary columns
-historical_games = historical_games[['home_team', 'away_team', 'home_score', 'away_score']].dropna()
-
-# --- Calculate Elo Ratings ---
-elo_ratings = {}
-for idx, row in historical_games.iterrows():
-    home = row["home_team"]
-    away = row["away_team"]
-    home_score = row["home_score"]
-    away_score = row["away_score"]
-
-    home_elo = elo_ratings.get(home, base_elo)
-    away_elo = elo_ratings.get(away, base_elo)
-
-    expected_home = 1 / (1 + 10 ** ((away_elo - home_elo)/400))
-    score_home = 1 if home_score > away_score else 0 if home_score < away_score else 0.5
-    score_away = 1 - score_home
-
-    home_elo += k_factor * (score_home - expected_home)
-    away_elo += k_factor * (score_away - (1 - expected_home))
-
-    elo_ratings[home] = home_elo
-    elo_ratings[away] = away_elo
-
-st.success("Elo ratings calculated from historical data.")
-
-# --- Fetch Upcoming NFL Odds ---
+# --- Fetch Upcoming Odds ---
 API_KEY = "8a264564e3a5d2a556d475e547e1c417"
-SPORT = "americanfootball_nfl"
+SPORT_API_MAP = {"NFL":"americanfootball_nfl", "College Football":"americanfootball_ncaaf"}
+SPORT = SPORT_API_MAP[sport_choice]
 
-st.info("Fetching upcoming NFL games and odds...")
+st.info(f"Fetching upcoming {sport_choice} games and odds...")
 
 response = requests.get(
     f"https://api.the-odds-api.com/v4/sports/{SPORT}/odds",
@@ -80,15 +54,16 @@ for game in data:
     spread_away = None
     total_points = None
 
-    for market in game['bookmakers'][0]['markets']:
-        if market['key'] == "spreads":
-            spread_home = market['outcomes'][0]['point']
-            spread_away = market['outcomes'][1]['point']
-        elif market['key'] == "totals":
-            total_points = market['outcomes'][0]['point']
-        elif market['key'] == "h2h":
-            moneyline_home = market['outcomes'][0]['price']
-            moneyline_away = market['outcomes'][1]['price']
+    if game['bookmakers']:
+        for market in game['bookmakers'][0]['markets']:
+            if market['key'] == "spreads":
+                spread_home = market['outcomes'][0]['point']
+                spread_away = market['outcomes'][1]['point']
+            elif market['key'] == "totals":
+                total_points = market['outcomes'][0]['point']
+            elif market['key'] == "h2h":
+                moneyline_home = market['outcomes'][0]['price']
+                moneyline_away = market['outcomes'][1]['price']
 
     games.append({
         "home_team": home,
@@ -103,8 +78,8 @@ for game in data:
 
 upcoming_games = pd.DataFrame(games)
 
-# --- Show All Upcoming Games ---
-st.subheader("All Upcoming Games")
+# --- Show All Games ---
+st.subheader(f"All Upcoming {sport_choice} Games")
 st.dataframe(upcoming_games)
 
 # --- Calculate Recommendations ---
@@ -116,15 +91,16 @@ for idx, row in upcoming_games.iterrows():
     away_elo = elo_ratings.get(away, base_elo)
     predicted_margin = home_elo - away_elo
 
-    # --- Edge Calculations ---
     def ml_to_prob(ml):
+        if ml is None:
+            return 0
         if ml > 0:
             return 100 / (ml + 100)
         else:
             return -ml / (-ml + 100)
 
-    edge_home_ml = ml_to_prob(row["moneyline_home"]) - 0.5 if row["moneyline_home"] else 0
-    edge_away_ml = ml_to_prob(row["moneyline_away"]) - 0.5 if row["moneyline_away"] else 0
+    edge_home_ml = ml_to_prob(row["moneyline_home"]) - 0.5
+    edge_away_ml = ml_to_prob(row["moneyline_away"]) - 0.5
     edge_home_spread = predicted_margin - row["spread_home"] if row["spread_home"] else 0
     edge_away_spread = -predicted_margin - row["spread_away"] if row["spread_away"] else 0
     edge_over = predicted_margin - row["total_points"]/2 if row["total_points"] else 0
@@ -143,7 +119,6 @@ for idx, row in upcoming_games.iterrows():
     best_edge = edges[best_bet_type]
     stake = bankroll * fractional_kelly * max(0,best_edge)
 
-    # --- Selection & Opponent ---
     if "Home" in best_bet_type:
         selection = home
         opponent = away
