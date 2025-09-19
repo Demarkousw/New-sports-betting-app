@@ -124,6 +124,7 @@ def build_recommendations(games, sport_choice):
             week = game.get("week", None)
             game_time = datetime.fromisoformat(game["commence_time"].replace("Z","+00:00"))
 
+            # Example stadium coords (replace with real coordinates if available)
             lat, lon = 40.0, -75.0
             weather_str, temp, wind, desc = fetch_weather(lat, lon)
 
@@ -156,11 +157,13 @@ def build_recommendations(games, sport_choice):
                     if "point" in outcome:
                         point_spread = outcome["point"]
 
-            # Adjust edges for weather
+            # Adjust edges for weather if enabled
             if use_weather:
                 if wind and wind > 15:
-                    if "Over" in edges: edges["Over"] -= 0.1
-                    if "Under" in edges: edges["Under"] += 0.1
+                    if "Over" in edges:
+                        edges["Over"] -= 0.1
+                    if "Under" in edges:
+                        edges["Under"] += 0.1
                     edges["Spread Home"] *= 0.9
                     edges["Spread Away"] *= 0.9
                 if "rain" in (desc or "") or "snow" in (desc or ""):
@@ -211,7 +214,7 @@ def build_recommendations(games, sport_choice):
     return pd.DataFrame(recs)
 
 # -------------------
-# FETCH & BUILD ALL GAMES
+# FETCH & BUILD
 # -------------------
 all_games = []
 for s in SPORTS.keys():
@@ -223,21 +226,21 @@ if all_games:
     bets_df = pd.concat([bets_df, new_df]).drop_duplicates(subset=["record_id"], keep="first").reset_index(drop=True)
 
 # -------------------
-# COLOR-CODING FUNCTION
+# COLOR-CODING
 # -------------------
 def style_row(row):
     edge = row["edge_pct"]
     status = row["status"]
-    if status == "WON":
-        return ["background-color: #ADD8E6; color: black"] * len(row)
-    elif status == "LOST":
-        return ["background-color: #D3D3D3; color: black"] * len(row)
+    if status=="WON":
+        return ["background-color: #ADD8E6; color: black"]*len(row)
+    elif status=="LOST":
+        return ["background-color: #D3D3D3; color: black"]*len(row)
     elif edge >= 5:
-        return ["background-color: #9AFF99; color: black"] * len(row)
+        return ["background-color: #9AFF99; color: black"]*len(row)
     elif edge >= 2:
-        return ["background-color: #FFFF99; color: black"] * len(row)
+        return ["background-color: #FFFF99; color: black"]*len(row)
     else:
-        return ["background-color: #FF9999; color: black"] * len(row)
+        return ["background-color: #FF9999; color: black"]*len(row)
 
 # -------------------
 # RECOMMENDED PARLAYS (Pick-3 to Pick-8)
@@ -268,7 +271,7 @@ else:
     st.write("No parlays available with current settings.")
 
 # -------------------
-# RANDOM CROSS-SPORT PARLAYS
+# TRUE CROSS-SPORT RANDOM PARLAYS
 # -------------------
 st.subheader("Random Cross-Sport Parlays (MLB + NCAA + NFL)")
 all_top_bets = bets_df[(bets_df["status"]=="PENDING") & (bets_df["edge_pct"]>=2)]
@@ -293,7 +296,7 @@ else:
     st.write("Not enough high-edge bets across sports to create random cross-sport parlays.")
 
 # -------------------
-# ALL-TIME BETS OVERVIEW
+# DISPLAY W/L TABLE
 # -------------------
 st.header("All-Time Bets Overview")
 st.dataframe(bets_df.style.apply(style_row, axis=1), use_container_width=True)
@@ -313,19 +316,41 @@ if not pending.empty:
             if len(idx)==0: continue
             bets_df.loc[idx,"status"] = result_choice
         bets_df.to_csv(BETS_LOG,index=False)
-       # -------------------
-# COLOR-CODING
+        st.success("Updated pending bets.")
+
 # -------------------
-def style_row(row):
-    edge = row["edge_pct"]
-    status = row["status"]
-    if status == "WON":
-        return ["background-color: #ADD8E6; color: black"] * len(row)
-    elif status == "LOST":
-        return ["background-color: #D3D3D3; color: black"] * len(row)
-    elif edge >= 5:
-        return ["background-color: #9AFF99; color: black"] * len(row)
-    elif edge >= 2:
-        return ["background-color: #FFFF99; color: black"] * len(row)
+# ALL-TIME RECORD
+# -------------------
+if not bets_df.empty:
+    wins = len(bets_df[bets_df["status"]=="WON"])
+    losses = len(bets_df[bets_df["status"]=="LOST"])
+    st.subheader("All-Time Record")
+    st.write(f"Wins: {wins} | Losses: {losses} | Total Bets: {wins + losses}")
+
+# -------------------
+# NFL FANTASY PROJECTIONS
+# -------------------
+st.subheader("NFL Fantasy Player Projections (Top 50)")
+def fetch_nfl_fantasy():
+    url = "https://api.sleeper.app/v1/players/nfl"
+    r = requests.get(url)
+    if r.status_code == 200:
+        data = r.json()
+        fantasy_df = pd.DataFrame([
+            {
+                "Player": p["full_name"],
+                "Team": p["team"],
+                "Position": p["position"],
+                "Fantasy Points": p.get("fantasy_points", None)
+            }
+            for p in data.values() if p.get("fantasy_points")
+        ])
+        return fantasy_df
     else:
-        return ["background-color: #FF9999; color: black"] * len(row)
+        return pd.DataFrame()
+
+fantasy_df = fetch_nfl_fantasy()
+if not fantasy_df.empty:
+    st.dataframe(fantasy_df.sort_values("Fantasy Points", ascending=False).head(50), use_container_width=True)
+else:
+    st.write("No fantasy data available.")
