@@ -3,7 +3,7 @@ import pandas as pd
 import requests
 from datetime import datetime
 
-st.title("Football Betting App — NFL Value Bets with Custom Odds")
+st.title("Football Betting App — NFL Best Bets")
 
 # --- Settings Sidebar ---
 st.sidebar.header("Betting Settings")
@@ -13,103 +13,107 @@ fractional_kelly = st.sidebar.slider("Fractional Kelly", 0.1, 1.0, 0.5)
 # --- API Setup ---
 API_KEY = "8a264564e3a5d2a556d475e547e1c417"
 SPORT = "americanfootball_nfl"
+MARKETS = "h2h,spreads,totals"
 
-# --- Function to Fetch Odds Safely ---
-def fetch_odds(market):
+# --- Function to Fetch Odds ---
+def fetch_odds():
     try:
-        response = requests.get(
-            f"https://api.the-odds-api.com/v4/sports/{SPORT}/odds",
-            params={"apiKey": API_KEY, "regions": "us", "markets": market}
-        )
+        url = f"https://api.the-odds-api.com/v4/sports/{SPORT}/odds"
+        params = {"apiKey": API_KEY, "regions": "us", "markets": MARKETS}
+        response = requests.get(url, params=params)
         response.raise_for_status()
         return response.json()
-    except requests.HTTPError:
+    except requests.RequestException as e:
+        st.error(f"Error fetching odds: {e}")
         return []
 
 # --- Fetch Odds ---
 st.info("Fetching NFL odds...")
-
-data = fetch_odds("h2h")  # start with h2h (moneyline)
+data = fetch_odds()
 if not data:
-    st.error("No odds available. Try again later.")
+    st.error("No odds available right now. Try again later.")
     st.stop()
 
-# --- Convert API data into DataFrame ---
+# --- Convert API Data to DataFrame ---
 games = []
 for game in data:
     home = game.get('home_team')
     away = game.get('away_team')
     game_time = datetime.fromisoformat(game['commence_time'].replace("Z",""))
 
-    ml_home = ml_away = None
+    ml_home = ml_away = spread_home = spread_away = total_over = total_under = None
+
     if game.get('bookmakers'):
         markets = game['bookmakers'][0].get('markets', [])
         for m in markets:
             if m['key'] == "h2h":
                 ml_home = m['outcomes'][0]['price']
                 ml_away = m['outcomes'][1]['price']
+            elif m['key'] == "spreads":
+                spread_home = m['outcomes'][0]['point']
+                spread_away = m['outcomes'][1]['point']
+            elif m['key'] == "totals":
+                total_over = m['outcomes'][0]['point']
+                total_under = m['outcomes'][1]['point']
 
     games.append({
         "home": home, "away": away, "game_time": game_time,
-        "ml_home": ml_home, "ml_away": ml_away
+        "ml_home": ml_home, "ml_away": ml_away,
+        "spread_home": spread_home, "spread_away": spread_away,
+        "over": total_over, "under": total_under
     })
 
 df = pd.DataFrame(games)
 
-# --- Custom Odds Input ---
-st.subheader("Add Your Own Odds for Each Team")
-custom_odds = {}
-for idx, row in df.iterrows():
-    matchup = f"{row['away']} @ {row['home']}"
-    my_home = st.number_input(f"My Odds for {row['home']} vs {row['away']} (e.g., -110)", value=0, key=f"home_{idx}")
-    my_away = st.number_input(f"My Odds for {row['away']} vs {row['home']} (e.g., -110)", value=0, key=f"away_{idx}")
-    custom_odds[matchup] = {"home": my_home, "away": my_away}
-
-# --- Edge Calculation ---
-def calc_edge(my_odds, market_odds):
-    """Positive edge = my line better than sportsbook line"""
-    if my_odds == 0 or market_odds is None:
+# --- Convert Odds to Probabilities ---
+def odds_to_prob(odds):
+    if odds is None:
         return 0
-    def to_prob(odds):
-        return 100/(odds+100) if odds>0 else -odds/(-odds+100)
-    my_prob = to_prob(my_odds)
-    market_prob = to_prob(market_odds)
-    return market_prob - my_prob  # positive = value
+    if odds > 0:
+        return 100 / (odds + 100)
+    return -odds / (-odds + 100)
 
-# --- Generate Recommendations ---
+# --- Calculate Edges & Recommendations ---
 recommendations = []
 for idx, row in df.iterrows():
-    matchup = f"{row['away']} @ {row['home']}"
-    my_home = custom_odds[matchup]["home"]
-    my_away = custom_odds[matchup]["away"]
+    edges = {
+        "ML Home": 0.5 - odds_to_prob(row["ml_home"]),
+        "ML Away": 0.5 - odds_to_prob(row["ml_away"]),
+        "Spread Home": 0.5 - odds_to_prob(row["spread_home"]),
+        "Spread Away": 0.5 - odds_to_prob(row["spread_away"]),
+        "Over": 0.5 - odds_to_prob(row["over"]),
+        "Under": 0.5 - odds_to_prob(row["under"]),
+    }
 
-    edge_home = calc_edge(my_home, row["ml_home"])
-    edge_away = calc_edge(my_away, row["ml_away"])
-
-    if edge_home > edge_away:
-        selection = row["home"]
-        best_edge = edge_home
-        opponent = row["away"]
-    else:
-        selection = row["away"]
-        best_edge = edge_away
-        opponent = row["home"]
-
+    # Best bet for this game
+    best_bet = max(edges, key=edges.get)
+    best_edge = edges[best_bet]
     stake = bankroll * fractional_kelly * max(0, best_edge)
 
+    if "Home" in best_bet:
+        selection = row["home"]
+        opponent = row["away"]
+    elif "Away" in best_bet:
+        selection = row["away"]
+        opponent = row["home"]
+    else:
+        selection = best_bet
+        opponent = f"{row['away']} @ {row['home']}"
+
     recommendations.append({
-        "Matchup": matchup,
+        "Matchup": f"{row['away']} @ {row['home']}",
+        "Best Bet": best_bet,
         "Selection": selection,
         "Opponent": opponent,
         "Edge %": round(best_edge*100, 2),
         "Stake $": round(stake, 2)
     })
 
-# --- Show All Games ---
-st.subheader("All Games & Market Odds")
+# --- Show All Odds ---
+st.subheader("All Games & Odds")
 st.dataframe(df)
 
-# --- Show Recommended Bets ---
+# --- Show Recommendations ---
 st.subheader("Recommended Bets (Sorted by Edge)")
 rec_df = pd.DataFrame(recommendations).sort_values(by="Edge %", ascending=False)
 st.dataframe(rec_df)
