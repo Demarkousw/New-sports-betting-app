@@ -124,7 +124,6 @@ def build_recommendations(games, sport_choice):
             week = game.get("week", None)
             game_time = datetime.fromisoformat(game["commence_time"].replace("Z","+00:00"))
 
-            # Example stadium coords (replace with real coordinates if available)
             lat, lon = 40.0, -75.0
             weather_str, temp, wind, desc = fetch_weather(lat, lon)
 
@@ -157,13 +156,11 @@ def build_recommendations(games, sport_choice):
                     if "point" in outcome:
                         point_spread = outcome["point"]
 
-            # Adjust edges for weather if enabled
+            # Adjust edges for weather
             if use_weather:
                 if wind and wind > 15:
-                    if "Over" in edges:
-                        edges["Over"] -= 0.1
-                    if "Under" in edges:
-                        edges["Under"] += 0.1
+                    if "Over" in edges: edges["Over"] -= 0.1
+                    if "Under" in edges: edges["Under"] += 0.1
                     edges["Spread Home"] *= 0.9
                     edges["Spread Away"] *= 0.9
                 if "rain" in (desc or "") or "snow" in (desc or ""):
@@ -214,7 +211,7 @@ def build_recommendations(games, sport_choice):
     return pd.DataFrame(recs)
 
 # -------------------
-# FETCH & BUILD
+# FETCH & BUILD ALL GAMES
 # -------------------
 all_games = []
 for s in SPORTS.keys():
@@ -226,6 +223,109 @@ if all_games:
     bets_df = pd.concat([bets_df, new_df]).drop_duplicates(subset=["record_id"], keep="first").reset_index(drop=True)
 
 # -------------------
+# COLOR-CODING FUNCTION
+# -------------------
+def style_row(row):
+    edge = row["edge_pct"]
+    status = row["status"]
+    if status == "WON":
+        return ["background-color: #ADD8E6; color: black"] * len(row)
+    elif status == "LOST":
+        return ["background-color: #D3D3D3; color: black"] * len(row)
+    elif edge >= 5:
+        return ["background-color: #9AFF99; color: black"] * len(row)
+    elif edge >= 2:
+        return ["background-color: #FFFF99; color: black"] * len(row)
+    else:
+        return ["background-color: #FF9999; color: black"] * len(row)
+
+# -------------------
+# RECOMMENDED PARLAYS (Pick-3 to Pick-8)
+# -------------------
+st.subheader("Recommended Parlays (Pick-3 to Pick-8)")
+top_bets = bets_df[bets_df["status"]=="PENDING"].sort_values(by="edge_pct", ascending=False).head(10)
+parlays = []
+
+for r in range(3,9):
+    for combo in itertools.combinations(top_bets.index, r):
+        selections = [top_bets.loc[i, "selection"] for i in combo]
+        matchups = [top_bets.loc[i, "matchup"] for i in combo]
+        expected_edge = 1
+        for i in combo:
+            expected_edge *= top_bets.loc[i, "edge_pct"] / 100
+        expected_edge *= 100
+        parlays.append({
+            "Parlay": " + ".join(selections),
+            "Games": " + ".join(matchups),
+            "Expected Edge %": round(expected_edge,2),
+            "Pick Count": r
+        })
+
+parlays_df = pd.DataFrame(parlays).sort_values(by="Expected Edge %", ascending=False)
+if not parlays_df.empty:
+    st.dataframe(parlays_df, use_container_width=True)
+else:
+    st.write("No parlays available with current settings.")
+
+# -------------------
+# RANDOM CROSS-SPORT PARLAYS
+# -------------------
+st.subheader("Random Cross-Sport Parlays (MLB + NCAA + NFL)")
+all_top_bets = bets_df[(bets_df["status"]=="PENDING") & (bets_df["edge_pct"]>=2)]
+random_parlays = []
+
+if not all_top_bets.empty:
+    for _ in range(5):
+        combo = all_top_bets.sample(min(3, len(all_top_bets)))
+        selections = combo["selection"].tolist()
+        matchups = combo["matchup"].tolist()
+        expected_edge = 1
+        for val in combo["edge_pct"]:
+            expected_edge *= val/100
+        expected_edge *= 100
+        random_parlays.append({
+            "Parlay": " + ".join(selections),
+            "Games": " + ".join(matchups),
+            "Expected Edge %": round(expected_edge,2)
+        })
+    st.dataframe(pd.DataFrame(random_parlays), use_container_width=True)
+else:
+    st.write("Not enough high-edge bets across sports to create random cross-sport parlays.")
+
+# -------------------
+# ALL-TIME BETS OVERVIEW
+# -------------------
+st.header("All-Time Bets Overview")
+st.dataframe(bets_df.style.apply(style_row, axis=1), use_container_width=True)
+
+# -------------------
+# UPDATE PENDING BETS
+# -------------------
+pending = bets_df[bets_df["status"]=="PENDING"]
+if not pending.empty:
+    st.subheader("Update Pending Bets")
+    pending_opts = pending["record_id"].astype(str).tolist()
+    chosen_pending = st.multiselect("Select pending bets to mark", pending_opts)
+    result_choice = st.radio("Mark as", ["WON","LOST"], index=1)
+    if st.button("Apply Result"):
+        for rid in chosen_pending:
+            idx = bets_df[bets_df["record_id"].astype(str)==rid].index
+            if len(idx)==0: continue
+            bets_df.loc[idx,"status"] = result_choice
+        bets_df.to_csv(BETS_LOG,index=False)
+       # -------------------
 # COLOR-CODING
 # -------------------
-def style
+def style_row(row):
+    edge = row["edge_pct"]
+    status = row["status"]
+    if status == "WON":
+        return ["background-color: #ADD8E6; color: black"] * len(row)
+    elif status == "LOST":
+        return ["background-color: #D3D3D3; color: black"] * len(row)
+    elif edge >= 5:
+        return ["background-color: #9AFF99; color: black"] * len(row)
+    elif edge >= 2:
+        return ["background-color: #FFFF99; color: black"] * len(row)
+    else:
+        return ["background-color: #FF9999; color: black"] * len(row)
