@@ -14,20 +14,31 @@ fractional_kelly = st.sidebar.slider("Fractional Kelly", 0.1, 1.0, 0.5)
 API_KEY = "8a264564e3a5d2a556d475e547e1c417"
 SPORT = "americanfootball_nfl"
 
-# --- Fetch Odds ---
+# --- Function to Fetch Odds Safely ---
+def fetch_odds(market):
+    try:
+        response = requests.get(
+            f"https://api.the-odds-api.com/v4/sports/{SPORT}/odds",
+            params={"apiKey": API_KEY, "regions": "us", "markets": market}
+        )
+        response.raise_for_status()
+        return response.json()
+    except requests.HTTPError as e:
+        st.warning(f"Market '{market}' not available: {e}")
+        return []
+
+# --- Fetch Odds in Layers ---
 st.info("Fetching NFL odds...")
 
-try:
-    response = requests.get(
-        f"https://api.the-odds-api.com/v4/sports/{SPORT}/odds",
-        params={"apiKey": API_KEY, "regions": "us", "markets": "spreads,totals,headtohead"}
-    )
-    response.raise_for_status()
-except Exception as e:
-    st.error(f"Failed to fetch odds: {e}")
-    st.stop()
+data_h2h = fetch_odds("h2h")
+data_spreads = fetch_odds("spreads")
+data_totals = fetch_odds("totals")
 
-data = response.json()
+# Combine data, fallback if needed
+data = data_h2h or data_spreads or data_totals
+if not data:
+    st.error("No odds available. Try again later.")
+    st.stop()
 
 # --- Convert API data into DataFrame ---
 games = []
@@ -41,13 +52,13 @@ for game in data:
     if game.get('bookmakers'):
         markets = game['bookmakers'][0].get('markets', [])
         for m in markets:
-            if m['key'] == "h2h":  # Moneyline
+            if m['key'] == "h2h":
                 ml_home = m['outcomes'][0]['price']
                 ml_away = m['outcomes'][1]['price']
-            elif m['key'] == "spreads":  # Spread
+            elif m['key'] == "spreads":
                 spread_home = m['outcomes'][0]['point']
                 spread_away = m['outcomes'][1]['point']
-            elif m['key'] == "totals":  # Over/Under
+            elif m['key'] == "totals":
                 total_over = m['outcomes'][0]['point']
                 total_under = m['outcomes'][1]['point']
 
@@ -60,16 +71,15 @@ for game in data:
 
 df = pd.DataFrame(games)
 
-# --- Helper: Simple Edge Calculation ---
+# --- Simple Edge Calculation ---
 def simple_edge(price):
-    """Returns a basic edge estimation based on odds vs fair coinflip (50%)."""
     if price is None:
         return 0
     if price > 0:
         implied = 100 / (price + 100)
     else:
         implied = -price / (-price + 100)
-    return 0.5 - implied  # positive means potential value
+    return 0.5 - implied
 
 # --- Generate Recommendations ---
 recommendations = []
@@ -77,13 +87,10 @@ for idx, row in df.iterrows():
     edges = {
         "ML Home": simple_edge(row["ml_home"]),
         "ML Away": simple_edge(row["ml_away"]),
-        "Spread Home": row["spread_home"] or 0,
-        "Spread Away": row["spread_away"] or 0,
         "Over": row["over"] or 0,
         "Under": row["under"] or 0
     }
 
-    # Find the best bet for this game
     best_bet_type = max(edges, key=edges.get)
     best_edge = edges[best_bet_type]
     stake = bankroll * fractional_kelly * max(0, best_edge)
@@ -91,21 +98,18 @@ for idx, row in df.iterrows():
     if "Home" in best_bet_type:
         selection = row["home"]
         opponent = row["away"]
-        bet_type = best_bet_type.replace("Home","")
     elif "Away" in best_bet_type:
         selection = row["away"]
         opponent = row["home"]
-        bet_type = best_bet_type.replace("Away","")
     else:
         selection = best_bet_type
         opponent = f"{row['away']} @ {row['home']}"
-        bet_type = "Totals"
 
     recommendations.append({
         "Matchup": f"{row['away']} @ {row['home']}",
         "Selection": selection,
         "Opponent": opponent,
-        "Recommended Bet": bet_type,
+        "Recommended Bet": best_bet_type,
         "Edge %": round(best_edge*100, 2),
         "Stake $": round(stake, 2)
     })
