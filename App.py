@@ -1,145 +1,214 @@
+# app.py
 import streamlit as st
 import pandas as pd
-from datetime import datetime
-from elo import calculate_elo, predict_margin
+import requests
+import time
+from elo import build_elos_from_history, expected_prob, american_to_decimal, implied_prob_from_american, kelly_fraction
+import math
+from io import StringIO
 
-# --- Sidebar Settings ---
-st.sidebar.title("Settings")
-sport = st.sidebar.selectbox("Select Sport", ["NFL", "NCAAF"])
-bankroll = st.sidebar.number_input("Bankroll ($)", min_value=0, value=1000)
-fractional_kelly = st.sidebar.slider("Fractional Kelly", 0.1, 1.0, 0.5)
-base_elo = st.sidebar.number_input("Base Elo", 1000, 2000, 1500)
-k_factor = st.sidebar.number_input("K-Factor", 1, 50, 20)
+st.set_page_config(page_title="Elo Value Bets (NFL & College)", layout="wide")
+st.title("Elo Value Bets — NFL & College (auto odds)")
 
-# API keys stored in Streamlit secrets
-odds_api_key = st.secrets["THE_ODDS_API_KEY"]
-weather_api_key = st.secrets.get("WEATHER_API_KEY", None)
+# Sidebar: settings + API key
+st.sidebar.header("Settings & API")
+api_key = st.sidebar.text_input("TheOddsAPI Key (paste here)", type="password")
+sport_choice = st.sidebar.selectbox("Sport for auto-odds", ["NFL", "College Football (NCAAF)"])
+base_elo = st.sidebar.number_input("Base Elo", value=1500, step=50)
+kfactor = st.sidebar.number_input("K-factor", value=20, step=1)
+bankroll = st.sidebar.number_input("Starting Bankroll $", value=1000.0, step=50.0)
+fractional_kelly_pct = st.sidebar.number_input("Fractional Kelly % (recommended)", value=0.5, min_value=0.0, max_value=1.0, step=0.1)
+regions = "us"  # odds region
 
-# --- Fetch Odds ---
-@st.cache_data(ttl=3600)
-def fetch_odds(sport):
-    # Replace with actual Odds API call
-    # Must return: home_team, away_team, game_time, moneyline_home, moneyline_away,
-    # spread_home, spread_away, total_points, venue
-    return pd.DataFrame()  # placeholder
+# Upload historical CSV
+st.sidebar.header("Upload historical CSV")
+st.sidebar.markdown("CSV columns: date (YYYY-MM-DD, optional), home_team, away_team, home_score, away_score")
+history_file = st.sidebar.file_uploader("Historical results CSV", type=["csv"])
 
-odds_df = fetch_odds(sport)
+# Build elos
+if history_file is not None:
+    df_hist = pd.read_csv(history_file)
+    elos = build_elos_from_history(df_hist, base_elo=base_elo, kfactor=kfactor)
+    st.sidebar.success(f"Loaded history: {len(df_hist)} rows; teams: {len(elos)}")
+else:
+    elos = {}
+    st.sidebar.info("No history uploaded yet — app will use base Elo for unknown teams.")
 
-# --- Add Week and Matchup ---
-odds_df["game_time"] = pd.to_datetime(odds_df["game_time"])
-odds_df["Week"] = odds_df["game_time"].dt.isocalendar().week
-odds_df["Matchup"] = odds_df["away_team"] + " @ " + odds_df["home_team"]
+# Auto-fetch odds button
+st.header("1) Fetch today's odds automatically")
+st.markdown("Press the button to fetch odds from The Odds API for the chosen sport.")
+fetch_button = st.button("Fetch odds (auto)")
 
-# --- Sidebar Week Filter ---
-selected_week = st.sidebar.selectbox("Select Week", sorted(odds_df["Week"].unique()))
-odds_df = odds_df[odds_df["Week"] == selected_week]
+# Map sport_choice to TheOddsAPI sport keys
+sport_key_map = {
+    "NFL": "americanfootball_nfl",
+    "College Football (NCAAF)": "americanfootball_ncaaf"
+}
+sport_key = sport_key_map[sport_choice]
 
-# --- Weather Function ---
-def fetch_weather(venue):
-    if not weather_api_key:
-        return None
-    # Call a weather API (OpenWeatherMap, etc.)
-    return {"temp": 70, "wind": 5, "rain": 0}
+def fetch_odds_from_theoddsapi(api_key, sport_key, regions="us", markets="h2h", oddsFormat="american"):
+    url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
+    params = {"apiKey": api_key, "regions": regions, "markets": markets, "oddsFormat": oddsFormat}
+    r = requests.get(url, params=params, timeout=20)
+    if r.status_code != 200:
+        return {"error": f"Status {r.status_code}: {r.text}"}
+    return r.json()
 
-# --- Injury Function ---
-def fetch_injuries(team):
-    # Return list of injured key players
-    return []
+odds_data = None
+if fetch_button:
+    if not api_key:
+        st.error("Paste your TheOddsAPI key in the sidebar first.")
+    else:
+        with st.spinner("Fetching odds..."):
+            odds_data = fetch_odds_from_theoddsapi(api_key, sport_key, regions=regions, markets="h2h,spreads,totals", oddsFormat="american")
+            if isinstance(odds_data, dict) and odds_data.get("error"):
+                st.error("Odds fetch error: " + odds_data["error"])
+                odds_data = None
+            else:
+                st.success(f"Fetched {len(odds_data)} events (may include in-play).")
 
-# --- Calculate Recommendations ---
-recommendations = []
+# Manual paste fallback
+st.header("2) Or paste / upload upcoming games (manual)")
+st.markdown("CSV columns: home_team,away_team,home_odds,away_odds (American odds integers).")
+upcoming_file = st.file_uploader("Upload upcoming games CSV", type=["csv"])
+manual_text = st.text_area("Or paste CSV rows here (same columns)", height=120)
 
-for idx, row in odds_df.iterrows():
-    home = row["home_team"]
-    away = row["away_team"]
-    game_time = row["game_time"]
-    
-    # Weather and injuries
-    weather = fetch_weather(row.get("venue", ""))
-    home_injuries = fetch_injuries(home)
-    away_injuries = fetch_injuries(away)
-    
-    # Elo prediction
-    home_elo, away_elo = calculate_elo(home, away, base_elo)
-    predicted_margin = predict_margin(home_elo, away_elo)
-    
-    # Adjust for injuries
-    if home_injuries: predicted_margin -= 3
-    if away_injuries: predicted_margin += 3
-    # Adjust for weather
-    if weather and (weather["rain"]>0 or weather["wind"]>20):
-        predicted_margin *= 0.9
-    
-    # --- Moneyline Edge ---
-    prob_home_win = 1 / (1 + 10 ** ((away_elo - home_elo)/400))
-    prob_away_win = 1 - prob_home_win
-    # Implied probability placeholder
-    implied_home = 0.5  
-    implied_away = 0.5
-    edge_home_ml = prob_home_win - implied_home
-    edge_away_ml = prob_away_win - implied_away
-    
-    # --- Spread Edge ---
-    edge_home_spread = predicted_margin - row.get("spread_home",0)
-    edge_away_spread = -predicted_margin - row.get("spread_away",0)
-    
-    # --- Over/Under Edge ---
-    predicted_total = home_elo/10 + away_elo/10
-    over_under_edge = predicted_total - row.get("total_points",0)
-    
-    # --- Pick Best Bet ---
-    edges = {
-        "ML Home": edge_home_ml,
-        "ML Away": edge_away_ml,
-        "Spread Home": edge_home_spread,
-        "Spread Away": edge_away_spread,
-        "Over": over_under_edge,
-        "Under": -over_under_edge
-    }
-    best_bet_type = max(edges, key=edges.get)
-    best_edge = edges[best_bet_type]
-    stake = bankroll * fractional_kelly * max(0,best_edge)
-    
-    # --- Determine Selection & Opponent ---
-    if "Home" in best_bet_type:
-        selection_team = home
-        opponent = away
-        display_bet = best_bet_type.replace("Home","")  # ML or Spread
-    elif "Away" in best_bet_type:
-        selection_team = away
-        opponent = home
-        display_bet = best_bet_type.replace("Away","")
-    elif best_bet_type in ["Over", "Under"]:
-        selection_team = "Total Points"
-        opponent = f"{away} @ {home}"
-        display_bet = best_bet_type
-    
-    recommendations.append({
-        "Week": row["Week"],
-        "Matchup": row["Matchup"],
-        "Home": home,
-        "Away": away,
-        "Time": game_time.strftime("%Y-%m-%d %H:%M"),
-        "Weather": weather,
-        "Selection": selection_team,
-        "Opponent": opponent,
-        "Best Bet": display_bet,
-        "Edge %": round(best_edge*100,2),
-        "Stake $": round(stake,2)
-    })
+# Build unified upcoming games list
+upcoming_rows = []
+if odds_data:
+    # parse TheOddsAPI response to rows compatible with our app
+    for ev in odds_data:
+        # skip if no bookmakers or no markets
+        if not ev.get("bookmakers"):
+            continue
+        home = ev.get("home_team") or ev.get("home")
+        away = ev.get("away_team") or ev.get("away")
+        # choose the first bookmaker (you can choose 'best' later by scanning all bookmakers)
+        bk = ev["bookmakers"][0]
+        markets = {m["key"]: m for m in bk.get("markets", [])}
+        # try moneyline/h2h
+        if "h2h" in markets:
+            # outcomes with names and prices
+            outcomes = markets["h2h"]["outcomes"]
+            # find home and away odds
+            home_odds = None
+            away_odds = None
+            for o in outcomes:
+                name = o.get("name", "").lower()
+                price = o.get("price")
+                if not price:
+                    continue
+                if name in [home.lower(), "home", "home team"]:
+                    home_odds = price
+                elif name in [away.lower(), "away", "away team"]:
+                    away_odds = price
+                else:
+                    # sometimes names are team names; match roughly
+                    if home.lower() in name:
+                        home_odds = price
+                    if away.lower() in name:
+                        away_odds = price
+            if home_odds is None or away_odds is None:
+                # fallback: try to map by order (not safe)
+                if len(outcomes) >= 2:
+                    home_odds = outcomes[0].get("price")
+                    away_odds = outcomes[1].get("price")
+            # append row
+            if home and away and home_odds is not None and away_odds is not None:
+                upcoming_rows.append({
+                    "home": home, "away": away, "home_odds": int(home_odds), "away_odds": int(away_odds)
+                })
 
-# --- Display Recommendations ---
-rec_df = pd.DataFrame(recommendations)
-st.subheader(f"Recommended Bets — Week {selected_week}")
-st.dataframe(rec_df)
+# manual CSV upload or paste
+if upcoming_file is not None:
+    df_up = pd.read_csv(upcoming_file)
+    for _, r in df_up.iterrows():
+        try:
+            upcoming_rows.append({
+                "home": r["home_team"],
+                "away": r["away_team"],
+                "home_odds": int(r["home_odds"]),
+                "away_odds": int(r["away_odds"])
+            })
+        except Exception as e:
+            st.warning("Problem reading a row in uploaded upcoming CSV: " + str(e))
 
-# --- Log Bets ---
-log_file = "bets_log.csv"
-try:
-    existing_log = pd.read_csv(log_file)
-    updated_log = pd.concat([existing_log, rec_df])
-except FileNotFoundError:
-    updated_log = rec_df
+if manual_text:
+    try:
+        df_manual = pd.read_csv(StringIO(manual_text))
+        for _, r in df_manual.iterrows():
+            upcoming_rows.append({
+                "home": r["home_team"],
+                "away": r["away_team"],
+                "home_odds": int(r["home_odds"]),
+                "away_odds": int(r["away_odds"])
+            })
+    except Exception as e:
+        st.warning("Could not parse pasted CSV: " + str(e))
 
-updated_log.to_csv(log_file, index=False)
-st.success(f"{len(rec_df)} bets logged to {log_file}")
+# If we have upcoming rows, assess them
+if len(upcoming_rows) > 0:
+    st.header("3) Model assessment — recommended bets")
+    rows_out = []
+    for r in upcoming_rows:
+        home = r["home"]
+        away = r["away"]
+        elo_home = elos.get(home, base_elo)
+        elo_away = elos.get(away, base_elo)
+        phome = expected_prob(elo_home, elo_away)
+        paway = 1.0 - phome
+        home_odds = r["home_odds"]
+        away_odds = r["away_odds"]
+        dec_home = american_to_decimal(home_odds)
+        dec_away = american_to_decimal(away_odds)
+        imp_home = implied_prob_from_american(home_odds)
+        imp_away = implied_prob_from_american(away_odds)
+        edge_home = phome - imp_home
+        edge_away = paway - imp_away
+        kelly_home = kelly_fraction(dec_home, phome) * fractional_kelly_pct
+        kelly_away = kelly_fraction(dec_away, paway) * fractional_kelly_pct
+        rows_out.append({
+            "home": home, "away": away,
+            "elo_home": round(elo_home,1), "elo_away": round(elo_away,1),
+            "p_home": round(phome,3), "p_away": round(paway,3),
+            "home_odds": home_odds, "away_odds": away_odds,
+            "imp_home": round(imp_home,3), "imp_away": round(imp_away,3),
+            "edge_home": round(edge_home,3), "edge_away": round(edge_away,3),
+            "kelly_home_frac": round(kelly_home,3), "kelly_away_frac": round(kelly_away,3),
+            "kelly_home_$": round(kelly_home * bankroll,2), "kelly_away_$": round(kelly_away * bankroll,2)
+        })
+    df_results = pd.DataFrame(rows_out)
+    st.subheader("All upcoming games (model vs market)")
+    st.dataframe(df_results, width=1100)
+
+    # Recommended bets
+    bet_list = []
+    for _, r in df_results.iterrows():
+        if r["edge_home"] > 0:
+            bet_list.append({
+                "selection": f"{r['home']} (home)",
+                "prob": r["p_home"],
+                "odds": r["home_odds"],
+                "edge": r["edge_home"],
+                "kelly_frac": r["kelly_home_frac"],
+                "stake_$": r["kelly_home_$"]
+            })
+        if r["edge_away"] > 0:
+            bet_list.append({
+                "selection": f"{r['away']} (away)",
+                "prob": r["p_away"],
+                "odds": r["away_odds"],
+                "edge": r["edge_away"],
+                "kelly_frac": r["kelly_away_frac"],
+                "stake_$": r["kelly_away_$"]
+            })
+    if len(bet_list) == 0:
+        st.info("No positive-edge bets found. Try adjusting K-factor, upload more history, or use a different bookmaker in API response.")
+    else:
+        df_bets = pd.DataFrame(bet_list).sort_values("edge", ascending=False).reset_index(drop=True)
+        df_bets["edge_pct"] = (df_bets["edge"] * 100).round(2)
+        st.subheader("Recommended Value Bets (sorted by edge)")
+        st.dataframe(df_bets[["selection","prob","odds","edge_pct","kelly_frac","stake_$"]], width=800)
+
+st.markdown("---")
+st.markdown("Notes: The odds API returns multiple bookmakers; this app uses the first bookmaker returned for speed. You can improve accuracy by selecting the bookmaker with the best depth or the best line (line shopping).")
