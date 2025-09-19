@@ -8,7 +8,7 @@ import math
 # -------------------
 # CONFIG
 # -------------------
-API_KEY = "YOUR_API_KEY_HERE"
+API_KEY = "YOUR_API_KEY_HERE"  # <-- Put your real Odds API key here
 SPORTS = {
     "NFL": "americanfootball_nfl",
     "NCAA Football": "americanfootball_ncaaf",
@@ -20,7 +20,6 @@ MARKETS = ["h2h", "spreads", "totals"]
 BETS_LOG = "bets_log.csv"
 RESULTS_LOG = "results.csv"
 
-# Columns
 BETS_COLS = ["record_id","timestamp","sport","matchup","game_time","bet_type","selection","opponent","edge_pct","stake","predicted_margin","status"]
 RESULTS_COLS = ["record_id","timestamp","sport","matchup","bet_type","selection","stake","edge_pct","result"]
 
@@ -48,8 +47,8 @@ results_df = load_or_create_csv(RESULTS_LOG, RESULTS_COLS)
 # -------------------
 # APP HEADER
 # -------------------
-st.set_page_config(layout="wide", page_title="Sports Betting Assistant v2.2")
-st.title("Sports Betting Assistant v2.2 — Full Automation & Tracking")
+st.set_page_config(layout="wide", page_title="Sports Betting Assistant v2.3")
+st.title("Sports Betting Assistant v2.3 — Full Automation & Tracking")
 
 # -------------------
 # SIDEBAR SETTINGS
@@ -72,7 +71,9 @@ def fetch_odds(sport_key):
     try:
         r = requests.get(url, params=params)
         if r.status_code == 200:
-            return r.json()
+            data = r.json()
+            if isinstance(data, list) and len(data) > 0:
+                return data
         return []
     except:
         return []
@@ -101,8 +102,8 @@ def build_recommendations(games):
     recs = []
     for i, game in enumerate(games):
         try:
-            home = game["home_team"]
-            away = game["away_team"]
+            home = game.get("home_team")
+            away = game.get("away_team")
             game_time = datetime.fromisoformat(game["commence_time"].replace("Z","+00:00"))
             bookmakers = game.get("bookmakers", [])
             markets = {}
@@ -223,9 +224,9 @@ else:
 with st.expander("Instructions"):
     st.markdown("""
 1. Select a sport and adjust bankroll & settings.
-2. Recommended bets will appear automatically (color-coded edges: green=strong, yellow=moderate, red=weak).
-3. Record bets you actually placed by marking them pending.
-4. Mark pending bets as WON or LOST to track all-time record.
-5. Download CSVs for review or backup.
-6. Edge % and stake are automatically calculated based on bankroll and fractional Kelly.
+2. Recommended bets appear automatically (color-coded edges: green=strong, yellow=moderate, red=weak).
+3. Track bets by marking them pending and update as WON or LOST.
+4. Download CSVs for backup or offline review.
+5. Edge % and stake are calculated automatically.
+6. The app will automatically handle missing markets gracefully — no manual entry required.
 """)
