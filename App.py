@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 
-st.title("iPad-Compatible Sports Betting App")
+st.title("Self-Contained Sports Betting App")
 
 # --- Sidebar Settings ---
 bankroll = st.sidebar.number_input("Bankroll ($)", min_value=0, value=1000)
@@ -10,13 +10,13 @@ fractional_kelly = st.sidebar.slider("Fractional Kelly", 0.1, 1.0, 0.5)
 base_elo = st.sidebar.number_input("Base Elo", 1000, 2000, 1500)
 k_factor = st.sidebar.number_input("K-Factor", 1, 50, 20)
 
-# --- Load Historical Games ---
-try:
-    historical_games = pd.read_csv("historical_games.csv")
-    st.write("Historical games loaded ✅")
-except FileNotFoundError:
-    st.error("historical_games.csv not found!")
-    st.stop()
+# --- Sample Historical Games ---
+historical_games = pd.DataFrame([
+    {"home_team": "Bills", "away_team": "Dolphins", "home_score": 31, "away_score": 24},
+    {"home_team": "Jets", "away_team": "Patriots", "home_score": 17, "away_score": 20},
+    {"home_team": "Bills", "away_team": "Patriots", "home_score": 28, "away_score": 21},
+    {"home_team": "Jets", "away_team": "Dolphins", "home_score": 14, "away_score": 10},
+])
 
 # --- Initialize Elo Ratings ---
 elo_ratings = {}
@@ -39,14 +39,14 @@ for idx, row in historical_games.iterrows():
     elo_ratings[home] = home_elo
     elo_ratings[away] = away_elo
 
-# --- Load Upcoming Games ---
-try:
-    upcoming_games = pd.read_csv("upcoming_games.csv")
-    upcoming_games["game_time"] = pd.to_datetime(upcoming_games["game_time"])
-    st.write("Upcoming games loaded ✅")
-except FileNotFoundError:
-    st.error("upcoming_games.csv not found!")
-    st.stop()
+# --- Sample Upcoming Games ---
+upcoming_games = pd.DataFrame([
+    {"week": 1, "home_team": "Bills", "away_team": "Jets", "game_time": "2025-09-21 13:00",
+     "moneyline_home": -150, "moneyline_away": +130, "spread_home": -7, "spread_away": +7, "total_points": 45},
+    {"week": 1, "home_team": "Dolphins", "away_team": "Patriots", "game_time": "2025-09-21 16:25",
+     "moneyline_home": -120, "moneyline_away": +110, "spread_home": -3, "spread_away": +3, "total_points": 42},
+])
+upcoming_games["game_time"] = pd.to_datetime(upcoming_games["game_time"])
 
 # --- Week Filter ---
 weeks = sorted(upcoming_games["week"].unique())
@@ -62,7 +62,7 @@ for idx, row in upcoming_games.iterrows():
     away_elo = elo_ratings.get(away, base_elo)
     predicted_margin = home_elo - away_elo
 
-    # --- Simple Edge Calculations ---
+    # --- Edge Calculations ---
     def ml_to_prob(ml):
         if ml > 0:
             return 100 / (ml + 100)
