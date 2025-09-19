@@ -1,8 +1,12 @@
 import streamlit as st
 import pandas as pd
+import requests
 from datetime import datetime
+import kagglehub
+import zipfile
+import os
 
-st.title("Full Sports Betting App — All Games + Recommendations")
+st.title("NFL Betting App — Live Odds & Elo Recommendations")
 
 # --- Sidebar Settings ---
 bankroll = st.sidebar.number_input("Bankroll ($)", min_value=0, value=1000)
@@ -10,15 +14,21 @@ fractional_kelly = st.sidebar.slider("Fractional Kelly", 0.1, 1.0, 0.5)
 base_elo = st.sidebar.number_input("Base Elo", 1000, 2000, 1500)
 k_factor = st.sidebar.number_input("K-Factor", 1, 50, 20)
 
-# --- Sample Historical Games (for Elo) ---
-historical_games = pd.DataFrame([
-    {"home_team": "Bills", "away_team": "Dolphins", "home_score": 31, "away_score": 24},
-    {"home_team": "Jets", "away_team": "Patriots", "home_score": 17, "away_score": 20},
-    {"home_team": "Cowboys", "away_team": "Giants", "home_score": 28, "away_score": 21},
-    {"home_team": "Packers", "away_team": "Bears", "home_score": 21, "away_score": 17},
-])
+# --- Load Historical NFL Scores from Kaggle ---
+st.info("Downloading historical NFL scores...")
+dataset_path = kagglehub.dataset_download("flynn28/1926-2024-nfl-scores")
+zip_path = os.path.join(dataset_path, os.listdir(dataset_path)[0])
 
-# --- Initialize Elo Ratings ---
+with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+    zip_ref.extractall("historical_data")
+
+csv_files = [f for f in os.listdir("historical_data") if f.endswith(".csv")]
+historical_games = pd.read_csv(os.path.join("historical_data", csv_files[0]))
+
+# Keep only necessary columns
+historical_games = historical_games[['home_team', 'away_team', 'home_score', 'away_score']].dropna()
+
+# --- Calculate Elo Ratings ---
 elo_ratings = {}
 for idx, row in historical_games.iterrows():
     home = row["home_team"]
@@ -39,32 +49,67 @@ for idx, row in historical_games.iterrows():
     elo_ratings[home] = home_elo
     elo_ratings[away] = away_elo
 
-# --- Full Week of Upcoming Games with Editable Odds ---
-upcoming_games = pd.DataFrame([
-    {"week": 1, "home_team": "Bills", "away_team": "Jets", "game_time": "2025-09-21 13:00",
-     "moneyline_home": -150, "moneyline_away": 130, "spread_home": -7, "spread_away": 7, "total_points": 45},
-    {"week": 1, "home_team": "Dolphins", "away_team": "Patriots", "game_time": "2025-09-21 16:25",
-     "moneyline_home": -120, "moneyline_away": 110, "spread_home": -3, "spread_away": 3, "total_points": 42},
-    {"week": 1, "home_team": "Cowboys", "away_team": "Giants", "game_time": "2025-09-21 20:20",
-     "moneyline_home": -140, "moneyline_away": 120, "spread_home": -6, "spread_away": 6, "total_points": 44},
-    {"week": 1, "home_team": "Packers", "away_team": "Bears", "game_time": "2025-09-22 13:00",
-     "moneyline_home": -130, "moneyline_away": 110, "spread_home": -4, "spread_away": 4, "total_points": 41},
-])
+st.success("Elo ratings calculated from historical data.")
 
-upcoming_games["game_time"] = pd.to_datetime(upcoming_games["game_time"])
+# --- Fetch Upcoming NFL Odds ---
+API_KEY = "8a264564e3a5d2a556d475e547e1c417"
+SPORT = "americanfootball_nfl"
 
-# --- Show All Games First ---
+st.info("Fetching upcoming NFL games and odds...")
+
+response = requests.get(
+    f"https://api.the-odds-api.com/v4/sports/{SPORT}/odds",
+    params={"apiKey": API_KEY, "regions": "us", "markets": "spreads,totals,headtohead"}
+)
+
+if response.status_code != 200:
+    st.error(f"Error fetching odds: {response.status_code}")
+    st.stop()
+
+data = response.json()
+
+# --- Convert API JSON to DataFrame ---
+games = []
+for game in data:
+    home = game['home_team']
+    away = game['away_team']
+    game_time = datetime.fromisoformat(game['commence_time'].replace("Z",""))
+    moneyline_home = None
+    moneyline_away = None
+    spread_home = None
+    spread_away = None
+    total_points = None
+
+    for market in game['bookmakers'][0]['markets']:
+        if market['key'] == "spreads":
+            spread_home = market['outcomes'][0]['point']
+            spread_away = market['outcomes'][1]['point']
+        elif market['key'] == "totals":
+            total_points = market['outcomes'][0]['point']
+        elif market['key'] == "h2h":
+            moneyline_home = market['outcomes'][0]['price']
+            moneyline_away = market['outcomes'][1]['price']
+
+    games.append({
+        "home_team": home,
+        "away_team": away,
+        "game_time": game_time,
+        "moneyline_home": moneyline_home,
+        "moneyline_away": moneyline_away,
+        "spread_home": spread_home,
+        "spread_away": spread_away,
+        "total_points": total_points
+    })
+
+upcoming_games = pd.DataFrame(games)
+
+# --- Show All Upcoming Games ---
 st.subheader("All Upcoming Games")
 st.dataframe(upcoming_games)
 
-# --- Week Filter ---
-weeks = sorted(upcoming_games["week"].unique())
-selected_week = st.sidebar.selectbox("Select Week", weeks)
-week_games = upcoming_games[upcoming_games["week"] == selected_week]
-
 # --- Calculate Recommendations ---
 recommendations = []
-for idx, row in week_games.iterrows():
+for idx, row in upcoming_games.iterrows():
     home = row["home_team"]
     away = row["away_team"]
     home_elo = elo_ratings.get(home, base_elo)
@@ -78,12 +123,12 @@ for idx, row in week_games.iterrows():
         else:
             return -ml / (-ml + 100)
 
-    edge_home_ml = ml_to_prob(row["moneyline_home"]) - 0.5
-    edge_away_ml = ml_to_prob(row["moneyline_away"]) - 0.5
-    edge_home_spread = predicted_margin - row["spread_home"]
-    edge_away_spread = -predicted_margin - row["spread_away"]
-    edge_over = predicted_margin - row["total_points"]/2
-    edge_under = row["total_points"]/2 - predicted_margin
+    edge_home_ml = ml_to_prob(row["moneyline_home"]) - 0.5 if row["moneyline_home"] else 0
+    edge_away_ml = ml_to_prob(row["moneyline_away"]) - 0.5 if row["moneyline_away"] else 0
+    edge_home_spread = predicted_margin - row["spread_home"] if row["spread_home"] else 0
+    edge_away_spread = -predicted_margin - row["spread_away"] if row["spread_away"] else 0
+    edge_over = predicted_margin - row["total_points"]/2 if row["total_points"] else 0
+    edge_under = row["total_points"]/2 - predicted_margin if row["total_points"] else 0
 
     edges = {
         "ML Home": edge_home_ml,
@@ -113,7 +158,6 @@ for idx, row in week_games.iterrows():
         display_bet = best_bet_type
 
     recommendations.append({
-        "Week": row["week"],
         "Matchup": f"{away} @ {home}",
         "Selection": selection,
         "Opponent": opponent,
@@ -126,3 +170,14 @@ for idx, row in week_games.iterrows():
 st.subheader("Recommended Bets")
 rec_df = pd.DataFrame(recommendations)
 st.dataframe(rec_df)
+
+# --- Log Bets ---
+log_file = "bets_log.csv"
+try:
+    existing_log = pd.read_csv(log_file)
+    updated_log = pd.concat([existing_log, rec_df])
+except FileNotFoundError:
+    updated_log = rec_df
+
+updated_log.to_csv(log_file, index=False)
+st.success(f"{len(rec_df)} bets logged to {log_file}")
