@@ -24,7 +24,7 @@ BETS_LOG = "bets_log.csv"
 BETS_COLS = [
     "record_id","timestamp","sport","week","home_team","away_team","matchup",
     "game_time","bet_type","selection","opponent","edge_pct","stake",
-    "predicted_margin","weather","status"
+    "predicted_margin","point_spread","weather","status"
 ]
 
 # -------------------
@@ -148,6 +148,13 @@ def build_recommendations(games):
                 edges["Over"] = 0.5
                 edges["Under"] = 0.5
 
+            # Point Spread
+            point_spread = None
+            if markets.get("spreads"):
+                for outcome in markets["spreads"]:
+                    if "point" in outcome:
+                        point_spread = outcome["point"]
+
             # Adjust edges for weather if enabled
             if use_weather:
                 if wind and wind > 15:
@@ -196,6 +203,7 @@ def build_recommendations(games):
                         "edge_pct": round(edge_pct,2),
                         "stake": round(stake,2),
                         "predicted_margin": round(predicted_margin,2),
+                        "point_spread": point_spread,
                         "weather": weather_str,
                         "status": "PENDING"
                     })
