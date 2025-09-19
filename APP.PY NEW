@@ -612,4 +612,4 @@ with st.expander("How to use v2.6 (quick guide)"):
 If you want any of the above improvements, tell me which one to prioritize and I’ll add it next.
 """)
 
-# End of App.py
+# End of App.py 
