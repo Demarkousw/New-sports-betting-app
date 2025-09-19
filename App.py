@@ -1,140 +1,127 @@
 import streamlit as st
 import pandas as pd
-import requests
 from datetime import datetime
-
-st.title("Live Sports Betting App — NFL & College Football")
+from elo import calculate_elo, predict_margin
 
 # --- Sidebar Settings ---
+st.sidebar.title("Settings")
+sport = st.sidebar.selectbox("Select Sport", ["NFL", "NCAAF"])
 bankroll = st.sidebar.number_input("Bankroll ($)", min_value=0, value=1000)
 fractional_kelly = st.sidebar.slider("Fractional Kelly", 0.1, 1.0, 0.5)
 base_elo = st.sidebar.number_input("Base Elo", 1000, 2000, 1500)
 k_factor = st.sidebar.number_input("K-Factor", 1, 50, 20)
-sport_choice = st.sidebar.selectbox("Select Sport", ["NFL", "College Football"])
 
-# --- Base Elo Ratings ---
-# Expand as needed for both NFL and College teams
-if sport_choice == "NFL":
-    teams = ["Bills","Jets","Dolphins","Patriots","Cowboys","Giants",
-             "Packers","Bears","Ravens","Steelers","Seahawks","49ers",
-             "Falcons","Saints","Broncos","Raiders"]
-else:  # College Football
-    teams = ["Alabama","Georgia","Ohio State","Michigan","Texas","LSU",
-             "Oklahoma","Florida","Penn State","Notre Dame","Clemson","Iowa"]
+# API keys stored in Streamlit secrets
+odds_api_key = st.secrets["THE_ODDS_API_KEY"]
+weather_api_key = st.secrets.get("WEATHER_API_KEY", None)
 
-elo_ratings = {team: base_elo for team in teams}
+# --- Fetch Odds ---
+@st.cache_data(ttl=3600)
+def fetch_odds(sport):
+    # Replace with actual Odds API call
+    # Must return: home_team, away_team, game_time, moneyline_home, moneyline_away,
+    # spread_home, spread_away, total_points, venue
+    return pd.DataFrame()  # placeholder
 
-# --- Fetch Upcoming Odds ---
-API_KEY = "8a264564e3a5d2a556d475e547e1c417"
-SPORT_API_MAP = {"NFL":"americanfootball_nfl", "College Football":"americanfootball_ncaaf"}
-SPORT = SPORT_API_MAP[sport_choice]
+odds_df = fetch_odds(sport)
 
-st.info(f"Fetching upcoming {sport_choice} games and odds...")
+# --- Add Week and Matchup ---
+odds_df["game_time"] = pd.to_datetime(odds_df["game_time"])
+odds_df["Week"] = odds_df["game_time"].dt.isocalendar().week
+odds_df["Matchup"] = odds_df["away_team"] + " @ " + odds_df["home_team"]
 
-response = requests.get(
-    f"https://api.the-odds-api.com/v4/sports/{SPORT}/odds",
-    params={"apiKey": API_KEY, "regions": "us", "markets": "spreads,totals,headtohead"}
-)
+# --- Sidebar Week Filter ---
+selected_week = st.sidebar.selectbox("Select Week", sorted(odds_df["Week"].unique()))
+odds_df = odds_df[odds_df["Week"] == selected_week]
 
-if response.status_code != 200:
-    st.error(f"Error fetching odds: {response.status_code}")
-    st.stop()
+# --- Weather Function ---
+def fetch_weather(venue):
+    if not weather_api_key:
+        return None
+    # Call a weather API (OpenWeatherMap, etc.)
+    return {"temp": 70, "wind": 5, "rain": 0}
 
-data = response.json()
-
-# --- Convert API JSON to DataFrame ---
-games = []
-for game in data:
-    home = game['home_team']
-    away = game['away_team']
-    game_time = datetime.fromisoformat(game['commence_time'].replace("Z",""))
-    moneyline_home = None
-    moneyline_away = None
-    spread_home = None
-    spread_away = None
-    total_points = None
-
-    if game['bookmakers']:
-        for market in game['bookmakers'][0]['markets']:
-            if market['key'] == "spreads":
-                spread_home = market['outcomes'][0]['point']
-                spread_away = market['outcomes'][1]['point']
-            elif market['key'] == "totals":
-                total_points = market['outcomes'][0]['point']
-            elif market['key'] == "h2h":
-                moneyline_home = market['outcomes'][0]['price']
-                moneyline_away = market['outcomes'][1]['price']
-
-    games.append({
-        "home_team": home,
-        "away_team": away,
-        "game_time": game_time,
-        "moneyline_home": moneyline_home,
-        "moneyline_away": moneyline_away,
-        "spread_home": spread_home,
-        "spread_away": spread_away,
-        "total_points": total_points
-    })
-
-upcoming_games = pd.DataFrame(games)
-
-# --- Show All Games ---
-st.subheader(f"All Upcoming {sport_choice} Games")
-st.dataframe(upcoming_games)
+# --- Injury Function ---
+def fetch_injuries(team):
+    # Return list of injured key players
+    return []
 
 # --- Calculate Recommendations ---
 recommendations = []
-for idx, row in upcoming_games.iterrows():
+
+for idx, row in odds_df.iterrows():
     home = row["home_team"]
     away = row["away_team"]
-    home_elo = elo_ratings.get(home, base_elo)
-    away_elo = elo_ratings.get(away, base_elo)
-    predicted_margin = home_elo - away_elo
-
-    def ml_to_prob(ml):
-        if ml is None:
-            return 0
-        if ml > 0:
-            return 100 / (ml + 100)
-        else:
-            return -ml / (-ml + 100)
-
-    edge_home_ml = ml_to_prob(row["moneyline_home"]) - 0.5
-    edge_away_ml = ml_to_prob(row["moneyline_away"]) - 0.5
-    edge_home_spread = predicted_margin - row["spread_home"] if row["spread_home"] else 0
-    edge_away_spread = -predicted_margin - row["spread_away"] if row["spread_away"] else 0
-    edge_over = predicted_margin - row["total_points"]/2 if row["total_points"] else 0
-    edge_under = row["total_points"]/2 - predicted_margin if row["total_points"] else 0
-
+    game_time = row["game_time"]
+    
+    # Weather and injuries
+    weather = fetch_weather(row.get("venue", ""))
+    home_injuries = fetch_injuries(home)
+    away_injuries = fetch_injuries(away)
+    
+    # Elo prediction
+    home_elo, away_elo = calculate_elo(home, away, base_elo)
+    predicted_margin = predict_margin(home_elo, away_elo)
+    
+    # Adjust for injuries
+    if home_injuries: predicted_margin -= 3
+    if away_injuries: predicted_margin += 3
+    # Adjust for weather
+    if weather and (weather["rain"]>0 or weather["wind"]>20):
+        predicted_margin *= 0.9
+    
+    # --- Moneyline Edge ---
+    prob_home_win = 1 / (1 + 10 ** ((away_elo - home_elo)/400))
+    prob_away_win = 1 - prob_home_win
+    # Implied probability placeholder
+    implied_home = 0.5  
+    implied_away = 0.5
+    edge_home_ml = prob_home_win - implied_home
+    edge_away_ml = prob_away_win - implied_away
+    
+    # --- Spread Edge ---
+    edge_home_spread = predicted_margin - row.get("spread_home",0)
+    edge_away_spread = -predicted_margin - row.get("spread_away",0)
+    
+    # --- Over/Under Edge ---
+    predicted_total = home_elo/10 + away_elo/10
+    over_under_edge = predicted_total - row.get("total_points",0)
+    
+    # --- Pick Best Bet ---
     edges = {
         "ML Home": edge_home_ml,
         "ML Away": edge_away_ml,
         "Spread Home": edge_home_spread,
         "Spread Away": edge_away_spread,
-        "Over": edge_over,
-        "Under": edge_under
+        "Over": over_under_edge,
+        "Under": -over_under_edge
     }
-
     best_bet_type = max(edges, key=edges.get)
     best_edge = edges[best_bet_type]
     stake = bankroll * fractional_kelly * max(0,best_edge)
-
+    
+    # --- Determine Selection & Opponent ---
     if "Home" in best_bet_type:
-        selection = home
+        selection_team = home
         opponent = away
-        display_bet = best_bet_type.replace("Home","")
+        display_bet = best_bet_type.replace("Home","")  # ML or Spread
     elif "Away" in best_bet_type:
-        selection = away
+        selection_team = away
         opponent = home
         display_bet = best_bet_type.replace("Away","")
-    elif best_bet_type in ["Over","Under"]:
-        selection = "Total Points"
+    elif best_bet_type in ["Over", "Under"]:
+        selection_team = "Total Points"
         opponent = f"{away} @ {home}"
         display_bet = best_bet_type
-
+    
     recommendations.append({
-        "Matchup": f"{away} @ {home}",
-        "Selection": selection,
+        "Week": row["Week"],
+        "Matchup": row["Matchup"],
+        "Home": home,
+        "Away": away,
+        "Time": game_time.strftime("%Y-%m-%d %H:%M"),
+        "Weather": weather,
+        "Selection": selection_team,
         "Opponent": opponent,
         "Best Bet": display_bet,
         "Edge %": round(best_edge*100,2),
@@ -142,8 +129,8 @@ for idx, row in upcoming_games.iterrows():
     })
 
 # --- Display Recommendations ---
-st.subheader("Recommended Bets")
 rec_df = pd.DataFrame(recommendations)
+st.subheader(f"Recommended Bets — Week {selected_week}")
 st.dataframe(rec_df)
 
 # --- Log Bets ---
