@@ -1,10 +1,11 @@
-# sports_betting_assistant.py
+# sports_betting_assistant_v2.5_plus_clipboard.py
 import random
 from itertools import combinations
 import streamlit as st
+import streamlit.components.v1 as components
 
 # ------------------------
-# 1️⃣ Data Setup
+# Data Setup
 # ------------------------
 NFL_games = [
     {"team1": "Cowboys", "team2": "Eagles", "ml1": +180, "ml2": -200, "spread1": -3, "spread2": +3, "ou": 45.5},
@@ -28,7 +29,7 @@ Fantasy_NFL_players = [
 ]
 
 # ------------------------
-# 2️⃣ Functions
+# Core Functions
 # ------------------------
 def calculate_probability(ml):
     return 100 / (ml + 100) if ml > 0 else -ml / (-ml + 100)
@@ -40,7 +41,7 @@ def calculate_parlay_payout(parlay, stake=100):
             odds = pick["value"]
             total_multiplier *= (odds / 100 + 1) if odds > 0 else (100 / -odds + 1)
         else:
-            total_multiplier *= 1.91  # Spread/OU standard -110
+            total_multiplier *= 1.91
     return round(stake * total_multiplier, 2)
 
 def select_pick(game):
@@ -90,38 +91,75 @@ def generate_fantasy_recommendations(players):
         recommendations.append({**player, "recommendation": rec})
     return recommendations
 
-# ------------------------
-# 3️⃣ Streamlit Dashboard
-# ------------------------
-st.title("🏈 Sports Betting Assistant v2.5")
+def format_parlay_text(parlay):
+    text = ""
+    for pick in parlay:
+        team = pick.get("team", "")
+        text += f"{pick['type']} | {team} | {pick['value']}\n"
+    return text
 
+def format_parlay_html(parlay):
+    html_text = ""
+    for pick in parlay:
+        team = pick.get("team","")
+        if pick["type"] == "ML":
+            prob = calculate_probability(pick["value"])
+            color = "green" if prob >= 0.6 else "red"
+        else:
+            color = "orange"
+        html_text += f"<span style='color:{color}'>{pick['type']} | {team} | {pick['value']}</span><br>"
+    return html_text
+
+def copy_button(parlay_text, key):
+    js = f"""
+    <script>
+    function copyToClipboard{key}() {{
+        navigator.clipboard.writeText(`{parlay_text}`);
+        alert('Parlay copied to clipboard!');
+    }}
+    </script>
+    <button onclick="copyToClipboard{key}()">Copy Parlay</button>
+    """
+    components.html(js, height=50)
+
+# ------------------------
+# Streamlit Dashboard
+# ------------------------
+st.set_page_config(page_title="Sports Betting Assistant v2.5+", layout="wide")
+st.title("🏈 Sports Betting Assistant v2.5+")
+
+# Inputs
 stake = st.number_input("Stake per Parlay ($):", min_value=1, value=100, step=10)
 num_random = st.number_input("Number of Random Cross-Sport Parlays:", min_value=1, value=5)
-display_count = st.number_input("Number of Top Recommended Parlays to Display:", min_value=1, value=5)
+display_count = st.number_input("Top Recommended Parlays to Display:", min_value=1, value=5)
 
-if st.button("Generate Dashboard"):
+st.markdown("---")
+
+# Recommended Parlays
+if st.button("Generate Recommended Parlays"):
     all_games = NFL_games + NCAA_games + MLB_games
-
-    # Recommended Parlays
     recommended = generate_recommended_parlays(all_games, stake=stake, display_count=display_count)
     st.subheader("✅ Recommended Parlays")
     for idx, p in enumerate(recommended[:display_count]):
-        st.markdown(f"**Parlay {idx+1}:**")
-        for pick in p["parlay"]:
-            st.write(f"{pick['type']} | {pick.get('team','')} | {pick['value']}")
-        st.write(f"**Potential Payout:** ${p['payout']}\n")
+        st.markdown(f"**Parlay {idx+1}:**", unsafe_allow_html=True)
+        st.markdown(format_parlay_html(p["parlay"]), unsafe_allow_html=True)
+        st.write(f"**Potential Payout:** ${p['payout']}")
+        copy_button(format_parlay_text(p["parlay"]), key=f"rec{idx}")
 
-    # Random Cross-Sport Parlays
+# Random Cross-Sport Parlays
+if st.button("Generate Random Cross-Sport Parlays"):
     random_parlays = generate_random_cross_sport_parlays(NFL_games, NCAA_games, MLB_games, num_parlays=num_random, stake=stake)
     st.subheader("🎲 Random Cross-Sport Parlays")
     for idx, p in enumerate(random_parlays):
-        st.markdown(f"**Parlay {idx+1}:**")
-        for pick in p["parlay"]:
-            st.write(f"{pick['type']} | {pick.get('team','')} | {pick['value']}")
-        st.write(f"**Potential Payout:** ${p['payout']}\n")
+        st.markdown(f"**Parlay {idx+1}:**", unsafe_allow_html=True)
+        st.markdown(format_parlay_html(p["parlay"]), unsafe_allow_html=True)
+        st.write(f"**Potential Payout:** ${p['payout']}")
+        copy_button(format_parlay_text(p["parlay"]), key=f"rand{idx}")
 
-    # Fantasy NFL Recommendations
+# Fantasy NFL Recommendations
+if st.button("Generate Fantasy NFL Recommendations"):
     fantasy_recs = generate_fantasy_recommendations(Fantasy_NFL_players)
     st.subheader("🏆 Fantasy NFL Recommendations")
     for f in fantasy_recs:
-        st.write(f"{f['player']} | {f['stat']} {f['projection']} | {f['recommendation']}")
+        color = "green" if f["recommendation"]=="Over" else "red"
+        st.markdown(f"<span style='color:{color}'>{f['player']} | {f['stat']} {f['projection']} | {f['recommendation']}</span>", unsafe_allow_html=True)
