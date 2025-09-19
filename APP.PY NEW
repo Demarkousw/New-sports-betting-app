@@ -8,20 +8,16 @@ import math
 # -------------------
 # CONFIG
 # -------------------
-API_KEY = "c5eece64b53f2c9622543faf5861555d"  # Your valid key
+API_KEY = "c5eece64b53f2c9622543faf5861555d"  # <-- Your valid key
 SPORTS = {
     "NFL": "americanfootball_nfl",
-    "NCAA Football": "americanfootball_ncaaf",
-    "MLB": "baseball_mlb"
+    "NCAA Football": "americanfootball_ncaaf"
 }
 REGIONS = "us"
 MARKETS = ["h2h", "spreads", "totals"]
 
 BETS_LOG = "bets_log.csv"
-RESULTS_LOG = "results.csv"
-
 BETS_COLS = ["record_id","timestamp","sport","matchup","game_time","bet_type","selection","opponent","edge_pct","stake","predicted_margin","status"]
-RESULTS_COLS = ["record_id","timestamp","sport","matchup","bet_type","selection","stake","edge_pct","result"]
 
 # -------------------
 # UTILITIES
@@ -33,8 +29,7 @@ def load_or_create_csv(path, cols):
             for c in cols:
                 if c not in df.columns:
                     df[c] = pd.NA
-            df = df[cols + [c for c in df.columns if c not in cols]]
-            return df
+            return df[cols]
         except:
             os.rename(path, path + ".bak")
             return pd.DataFrame(columns=cols)
@@ -42,13 +37,12 @@ def load_or_create_csv(path, cols):
         return pd.DataFrame(columns=cols)
 
 bets_df = load_or_create_csv(BETS_LOG, BETS_COLS)
-results_df = load_or_create_csv(RESULTS_LOG, RESULTS_COLS)
 
 # -------------------
 # APP HEADER
 # -------------------
-st.set_page_config(layout="wide", page_title="Sports Betting Assistant v2.5")
-st.title("Sports Betting Assistant v2.5 — Full Automation & Tracking")
+st.set_page_config(layout="wide", page_title="Sports Betting Assistant v2.0")
+st.title("Sports Betting Assistant v2.0 — Full Automation & Tracking")
 
 # -------------------
 # SIDEBAR SETTINGS
@@ -71,9 +65,7 @@ def fetch_odds(sport_key):
     try:
         r = requests.get(url, params=params)
         if r.status_code == 200:
-            data = r.json()
-            if isinstance(data, list) and len(data) > 0:
-                return data
+            return r.json()
         return []
     except:
         return []
@@ -84,8 +76,7 @@ def fetch_odds(sport_key):
 def odds_to_prob(odds):
     try:
         o = float(odds)
-        if o > 1:
-            return 1 / o
+        if o > 1: return 1 / o
         return -o / (1 - o)
     except:
         return 0.5
@@ -167,43 +158,39 @@ def build_recommendations(games):
 # -------------------
 # FETCH AND BUILD
 # -------------------
-st.header(f"{sport_choice} Recommended Bets")
 games = fetch_odds(SPORTS[sport_choice])
 recs_df = build_recommendations(games) if games else pd.DataFrame(columns=BETS_COLS)
 
-# Merge pending bets
-bets_df = load_or_create_csv(BETS_LOG,BETS_COLS)
-combined_df = pd.concat([recs_df, bets_df]).drop_duplicates(subset=["record_id"], keep="first").reset_index(drop=True)
-
-# Merge resolved results
-results_df = load_or_create_csv(RESULTS_LOG,RESULTS_COLS)
-if not results_df.empty:
-    combined_df = combined_df.merge(results_df[["record_id","result"]], on="record_id", how="left")
-    combined_df["status"] = combined_df["result"].fillna(combined_df["status"])
-combined_df["result"] = combined_df["status"]
+# Merge with existing bets
+bets_df = pd.concat([bets_df, recs_df]).drop_duplicates(subset=["record_id"], keep="first").reset_index(drop=True)
 
 # -------------------
 # COLOR-CODING FUNCTION
 # -------------------
-def style_df(row):
+def style_row(row):
     edge = row["edge_pct"]
-    if row["status"]=="WON":
-        return ["background-color: #ADD8E6"]*len(row)
-    elif row["status"]=="LOST":
-        return ["background-color: #D3D3D3"]*len(row)
+    status = row["status"]
+    if status=="WON":
+        return ["background-color: #ADD8E6; color: black"]*len(row)
+    elif status=="LOST":
+        return ["background-color: #D3D3D3; color: black"]*len(row)
     elif edge >= 5:
-        return ["background-color: #9AFF99"]*len(row)
+        return ["background-color: #9AFF99; color: black"]*len(row)
     elif edge >= 2:
-        return ["background-color: #FFFF99"]*len(row)
+        return ["background-color: #FFFF99; color: black"]*len(row)
     else:
-        return ["background-color: #FF9999"]*len(row)
-
-st.dataframe(combined_df.style.apply(style_df, axis=1), use_container_width=True)
+        return ["background-color: #FF9999; color: black"]*len(row)
 
 # -------------------
-# TRACK PENDING BETS
+# DISPLAY TABLE
 # -------------------
-pending = combined_df[combined_df["status"]=="PENDING"]
+st.header(f"{sport_choice} Bets Overview")
+st.dataframe(bets_df.style.apply(style_row, axis=1), use_container_width=True)
+
+# -------------------
+# UPDATE PENDING BETS
+# -------------------
+pending = bets_df[bets_df["status"]=="PENDING"]
 if not pending.empty:
     st.subheader("Update Pending Bets")
     pending_opts = pending["record_id"].astype(str).tolist()
@@ -211,9 +198,30 @@ if not pending.empty:
     result_choice = st.radio("Mark as", ["WON","LOST"], index=1)
     if st.button("Apply Result"):
         for rid in chosen_pending:
-            idx = combined_df[combined_df["record_id"].astype(str)==rid].index
+            idx = bets_df[bets_df["record_id"].astype(str)==rid].index
             if len(idx)==0: continue
-            combined_df.loc[idx,"status"] = result_choice
-            combined_df.loc[idx,"result"] = result_choice
-        combined_df.to_csv(BETS_LOG,index=False)
-       
+            bets_df.loc[idx,"status"] = result_choice
+        bets_df.to_csv(BETS_LOG,index=False)
+        st.success("Updated pending bets.")
+
+# -------------------
+# ALL-TIME RECORD
+# -------------------
+if not bets_df.empty:
+    wins = len(bets_df[bets_df["status"]=="WON"])
+    losses = len(bets_df[bets_df["status"]=="LOST"])
+    st.subheader("All-Time Record")
+    st.write(f"Wins: {wins} | Losses: {losses} | Total Bets: {wins+losses}")
+
+# -------------------
+# INSTRUCTIONS
+# -------------------
+with st.expander("Instructions"):
+    st.markdown("""
+1. Select a sport and adjust bankroll & settings.
+2. Recommended bets appear automatically in the table.
+3. Row colors indicate edge strength (green=strong, yellow=moderate, red=weak).
+4. Track bets by marking pending bets as WON or LOST.
+5. Edge % and stake are calculated automatically.
+6. Win/Loss is visible in the first column for resolved bets.
+""")
