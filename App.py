@@ -8,14 +8,14 @@ import math
 # -------------------
 # CONFIG
 # -------------------
-API_KEY = "YOUR_API_KEY_HERE"  # <-- Put your real Odds API key here
+API_KEY = "c5eece64b53f2c9622543faf5861555d"  # <-- Your valid key
 SPORTS = {
     "NFL": "americanfootball_nfl",
     "NCAA Football": "americanfootball_ncaaf",
     "MLB": "baseball_mlb"
 }
 REGIONS = "us"
-MARKETS = ["h2h", "spreads", "totals"]
+MARKETS = ["h2h", "spreads", "totals"]  # Fallback handled automatically
 
 BETS_LOG = "bets_log.csv"
 RESULTS_LOG = "results.csv"
@@ -47,8 +47,8 @@ results_df = load_or_create_csv(RESULTS_LOG, RESULTS_COLS)
 # -------------------
 # APP HEADER
 # -------------------
-st.set_page_config(layout="wide", page_title="Sports Betting Assistant v2.3")
-st.title("Sports Betting Assistant v2.3 — Full Automation & Tracking")
+st.set_page_config(layout="wide", page_title="Sports Betting Assistant v2.4")
+st.title("Sports Betting Assistant v2.4 — Full Automation & Tracking")
 
 # -------------------
 # SIDEBAR SETTINGS
@@ -176,9 +176,9 @@ if recs_df.empty:
 else:
     # Color-coded edges
     def color_edges(val):
-        if val >= 5: return 'background-color: #9AFF99' # strong green
-        elif val >= 2: return 'background-color: #FFFF99' # moderate yellow
-        else: return 'background-color: #FF9999' # weak red
+        if val >= 5: return 'background-color: #9AFF99'
+        elif val >= 2: return 'background-color: #FFFF99'
+        else: return 'background-color: #FF9999'
 
     styled = recs_df.style.applymap(color_edges, subset=["Edge %"])
     st.dataframe(styled, use_container_width=True)
@@ -228,5 +228,5 @@ with st.expander("Instructions"):
 3. Track bets by marking them pending and update as WON or LOST.
 4. Download CSVs for backup or offline review.
 5. Edge % and stake are calculated automatically.
-6. The app will automatically handle missing markets gracefully — no manual entry required.
+6. The app automatically handles free plan limitations — if spreads/totals aren’t available, it still gives recommendations.
 """)
