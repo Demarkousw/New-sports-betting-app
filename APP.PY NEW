@@ -3,6 +3,7 @@ import requests
 import pandas as pd
 from datetime import datetime
 import os
+import math
 
 # -------------------
 # CONFIG
@@ -18,6 +19,10 @@ MARKETS = ["h2h", "spreads", "totals"]
 
 BETS_LOG = "bets_log.csv"
 RESULTS_LOG = "results.csv"
+
+# Columns
+BETS_COLS = ["record_id","timestamp","sport","matchup","game_time","bet_type","selection","opponent","edge_pct","stake","predicted_margin","status"]
+RESULTS_COLS = ["record_id","timestamp","sport","matchup","bet_type","selection","stake","edge_pct","result"]
 
 # -------------------
 # UTILITIES
@@ -37,17 +42,14 @@ def load_or_create_csv(path, cols):
     else:
         return pd.DataFrame(columns=cols)
 
-BETS_COLS = ["record_id","timestamp","sport","matchup","game_time","bet_type","selection","opponent","edge_pct","stake","market_total","model_total","predicted_margin","status"]
-RESULTS_COLS = ["record_id","timestamp","sport","matchup","bet_type","selection","stake","edge_pct","result"]
-
 bets_df = load_or_create_csv(BETS_LOG, BETS_COLS)
 results_df = load_or_create_csv(RESULTS_LOG, RESULTS_COLS)
 
 # -------------------
 # APP HEADER
 # -------------------
-st.set_page_config(layout="wide", page_title="Sports Betting Assistant v2.1")
-st.title("Sports Betting Assistant v2.1 — Visual Edge & Tracking")
+st.set_page_config(layout="wide", page_title="Sports Betting Assistant v2.2")
+st.title("Sports Betting Assistant v2.2 — Full Automation & Tracking")
 
 # -------------------
 # SIDEBAR SETTINGS
@@ -76,7 +78,24 @@ def fetch_odds(sport_key):
         return []
 
 # -------------------
-# RECOMMENDATION LOGIC
+# EDGE CALCULATIONS
+# -------------------
+def odds_to_prob(odds):
+    try:
+        o = float(odds)
+        if o > 1:
+            return 1 / o
+        return -o / (1 - o)
+    except:
+        return 0.5
+
+def calc_margin(p_home, p_away):
+    p_home = max(min(p_home, 0.9999), 0.0001)
+    p_away = max(min(p_away, 0.9999), 0.0001)
+    return math.log(p_home/(1-p_home)) - math.log(p_away/(1-p_away))
+
+# -------------------
+# BUILD RECOMMENDATIONS
 # -------------------
 def build_recommendations(games):
     recs = []
@@ -91,21 +110,10 @@ def build_recommendations(games):
                 for m in bookmakers[0].get("markets", []):
                     markets[m["key"]] = m.get("outcomes", [])
 
-            # Simple edge logic
-            def odds_to_prob(odds):
-                try:
-                    o = float(odds)
-                    if o > 1:
-                        return 1/o
-                    return -o/(1-o)
-                except:
-                    return 0.5
-
+            # Probabilities & margins
             p_home = odds_to_prob(markets.get("h2h",[{"price":2}])[0]["price"]) if markets.get("h2h") else 0.5
             p_away = odds_to_prob(markets.get("h2h",[{"price":2}])[1]["price"]) if markets.get("h2h") else 0.5
-            import math
-            predicted_margin = math.log(max(min(p_home,0.9999),0.0001)/(1-max(min(p_home,0.9999),0.0001))) - \
-                               math.log(max(min(p_away,0.9999),0.0001)/(1-max(min(p_away,0.9999),0.0001)))
+            predicted_margin = calc_margin(p_home, p_away)
 
             edges = {}
             if markets.get("h2h"):
@@ -121,6 +129,7 @@ def build_recommendations(games):
             if edges:
                 best_key = max(edges, key=lambda x: edges[x])
                 edge_pct = edges[best_key]*100
+
                 if best_key.startswith("ML"):
                     bet_type = "Moneyline"
                     selection = home if "Home" in best_key else away
@@ -134,7 +143,7 @@ def build_recommendations(games):
                     selection = best_key
                     opponent = f"{away} @ {home}"
 
-                if bet_type in bet_type_filter and edge_pct>=min_edge_pct:
+                if bet_type in bet_type_filter and edge_pct >= min_edge_pct:
                     stake = bankroll * fractional_kelly * max(0, edges[best_key])
                     recs.append({
                         "ID": f"{i}_{int(datetime.utcnow().timestamp())}",
@@ -157,31 +166,31 @@ def build_recommendations(games):
 st.header(f"{sport_choice} Recommended Bets")
 games = fetch_odds(SPORTS[sport_choice])
 if not games:
-    st.warning("No odds data available.")
+    st.warning("No odds data available. Check your API key or plan.")
     st.stop()
 
 recs_df = build_recommendations(games)
 if recs_df.empty:
     st.write("No recommendations available.")
 else:
-    # Color code edges
+    # Color-coded edges
     def color_edges(val):
-        if val >= 5: return 'background-color: #9AFF99' # green strong
-        elif val >= 2: return 'background-color: #FFFF99' # yellow moderate
-        else: return 'background-color: #FF9999' # red weak
+        if val >= 5: return 'background-color: #9AFF99' # strong green
+        elif val >= 2: return 'background-color: #FFFF99' # moderate yellow
+        else: return 'background-color: #FF9999' # weak red
 
     styled = recs_df.style.applymap(color_edges, subset=["Edge %"])
     st.dataframe(styled, use_container_width=True)
     st.download_button("Download Recommendations CSV", data=recs_df.to_csv(index=False).encode('utf-8'), file_name="recommendations.csv", mime="text/csv")
-    st.info(f"Recommended unit size (2% of bankroll * fractional Kelly): ${bankroll * 0.02 * fractional_kelly:.2f}")
+    st.info(f"Recommended unit size: ${bankroll * 0.02 * fractional_kelly:.2f}")
 
 # -------------------
-# BET TRACKER (PLACE & MARK RESULTS)
+# BET TRACKER
 # -------------------
 st.header("Record & Track Bets")
-# load bets
 bets_df = load_or_create_csv(BETS_LOG,BETS_COLS)
 pending = bets_df[bets_df.get("status","PENDING")=="PENDING"] if not bets_df.empty else pd.DataFrame(columns=BETS_COLS)
+
 if not pending.empty:
     st.subheader("Pending Bets")
     st.dataframe(pending)
@@ -191,18 +200,20 @@ if not pending.empty:
     if st.button("Apply Result"):
         for rid in chosen_pending:
             idx = bets_df[bets_df["record_id"].astype(str)==str(rid)].index
-            if len(idx)==0: continue
+            if len(idx) == 0: continue
             bets_df.loc[idx,"status"] = result_choice
         bets_df.to_csv(BETS_LOG,index=False)
         st.success("Updated pending bets.")
 
-# Display all-time record
+# -------------------
+# ALL-TIME RECORD
+# -------------------
 results_df = load_or_create_csv(RESULTS_LOG,RESULTS_COLS)
 if not results_df.empty:
     wins = len(results_df[results_df["result"]=="WON"])
     losses = len(results_df[results_df["result"]=="LOST"])
     st.subheader("All-Time Record")
-    st.write(f"Wins: {wins} | Losses: {losses} | Total: {wins+losses}")
+    st.write(f"Wins: {wins} | Losses: {losses} | Total Bets: {wins+losses}")
 else:
     st.write("No resolved bets yet.")
 
@@ -211,9 +222,10 @@ else:
 # -------------------
 with st.expander("Instructions"):
     st.markdown("""
-1. Choose sport and adjust bankroll settings.
-2. Review recommended bets (green = strong edge, yellow = moderate, red = weak).
-3. Record bets you placed manually.
-4. Mark pending bets as WON or LOST to track your record.
-5. Download CSVs for offline review.
+1. Select a sport and adjust bankroll & settings.
+2. Recommended bets will appear automatically (color-coded edges: green=strong, yellow=moderate, red=weak).
+3. Record bets you actually placed by marking them pending.
+4. Mark pending bets as WON or LOST to track all-time record.
+5. Download CSVs for review or backup.
+6. Edge % and stake are automatically calculated based on bankroll and fractional Kelly.
 """)
