@@ -1,356 +1,162 @@
-import streamlit as st
-import requests
-import pandas as pd
-from datetime import datetime
-import os
-import math
-import itertools
+# sports_betting_assistant_v2_5_full.py
 import random
+from itertools import combinations
+import streamlit as st
+import pandas as pd
+import streamlit.components.v1 as components
 
-# -------------------
-# CONFIG
-# -------------------
-API_KEY_ODDS = "c5eece64b53f2c9622543faf5861555d"  # Odds API key
-API_KEY_WEATHER = "5ec258afff830598e45caad47e3edb8e"  # OpenWeatherMap API key
-
-SPORTS = {
-    "NFL": "americanfootball_nfl",
-    "NCAA Football": "americanfootball_ncaaf",
-    "MLB": "baseball_mlb"
-}
-
-REGIONS = "us"
-MARKETS = ["h2h", "spreads", "totals"]
-
-BETS_LOG = "bets_log.csv"
-BETS_COLS = [
-    "record_id","timestamp","sport","week","home_team","away_team","matchup",
-    "game_time","bet_type","selection","opponent","edge_pct","stake",
-    "predicted_margin","point_spread","weather","status"
+# ------------------------
+# Example Game Data
+# ------------------------
+NFL_games = [
+    {"team1": "Packers", "team2": "Browns", "ml1": -150, "ml2": +130, "spread1": -3, "spread2": +3, "ou": 42.5},
+    {"team1": "Cowboys", "team2": "Eagles", "ml1": +180, "ml2": -200, "spread1": -3, "spread2": +3, "ou": 45.5},
 ]
 
-# -------------------
-# UTILITIES
-# -------------------
-def load_or_create_csv(path, cols):
-    if os.path.exists(path):
-        try:
-            df = pd.read_csv(path)
-            for c in cols:
-                if c not in df.columns:
-                    df[c] = pd.NA
-            return df[cols]
-        except:
-            os.rename(path, path + ".bak")
-            return pd.DataFrame(columns=cols)
+NCAA_games = [
+    {"team1": "Ohio St", "team2": "Michigan", "ml1": -200, "ml2": +170, "spread1": -6, "spread2": +6, "ou": 52.0},
+]
+
+MLB_games = [
+    {"team1": "Yankees", "team2": "Red Sox", "ml1": -120, "ml2": +110},
+]
+
+Fantasy_NFL_players = [
+    {"position": "QB", "player": "Aaron Rodgers", "stat": "Passing Yards", "projection": 280},
+    {"position": "RB", "player": "Aaron Jones", "stat": "Rushing Yards", "projection": 85},
+    {"position": "WR", "player": "Davante Adams", "stat": "Rec Yards", "projection": 105},
+    {"position": "TE", "player": "Robert Tonyan", "stat": "Rec Yards", "projection": 65},
+    {"position": "FLEX", "player": "Allen Lazard", "stat": "Rec Yards", "projection": 70},
+]
+
+# ------------------------
+# Core Functions
+# ------------------------
+def calculate_probability(ml):
+    return 100 / (ml + 100) if ml > 0 else -ml / (-ml + 100)
+
+def calculate_parlay_payout(parlay, stake=100):
+    total_multiplier = 1
+    for pick in parlay:
+        if pick["type"] == "ML":
+            odds = pick["value"]
+            total_multiplier *= (odds / 100 + 1) if odds > 0 else (100 / -odds + 1)
+        else:
+            total_multiplier *= 1.91
+    return round(stake * total_multiplier, 2)
+
+def select_pick(game):
+    pick_type = random.choice(["ML", "Spread", "OU"])
+    if pick_type == "ML":
+        team = random.choice(["team1","team2"])
+        return {"type":"ML", "team":game[team], "value":game[f"ml{1 if team=='team1' else 2}"]}
+    elif pick_type=="Spread" and "spread1" in game:
+        team = random.choice(["team1","team2"])
+        return {"type":"Spread","team":game[team],"value":game[f"spread{1 if team=='team1' else 2}"]}
+    elif pick_type=="OU" and "ou" in game:
+        side=random.choice(["Over","Under"])
+        return {"type":"OU","value":f"{side} {game['ou']}"}
     else:
-        return pd.DataFrame(columns=cols)
+        return select_pick(game)
 
-bets_df = load_or_create_csv(BETS_LOG, BETS_COLS)
+def generate_recommended_parlays(all_games, min_pick=3, max_pick=8, stake=100, display_count=5):
+    parlays=[]
+    for pick_count in range(min_pick,max_pick+1):
+        combos=list(combinations(all_games,pick_count))
+        top_combos=combos[:display_count]  # simple top picks
+        for combo in top_combos:
+            parlay=[select_pick(g) for g in combo]
+            payout=calculate_parlay_payout(parlay,stake)
+            parlays.append({"parlay":parlay,"payout":payout})
+    return parlays
 
-# -------------------
-# APP HEADER
-# -------------------
-st.set_page_config(layout="wide", page_title="Sports Betting Assistant v2.5")
-st.title("Sports Betting Assistant v2.5 — Full Automation, Cross-Sport & Fantasy")
+def generate_random_cross_sport_parlays(NFL,NCAA,MLB,num_parlays=5,stake=100):
+    parlays=[]
+    for _ in range(num_parlays):
+        picks=[
+            select_pick(random.choice(NFL)),
+            select_pick(random.choice(NCAA)),
+            select_pick(random.choice(MLB))
+        ]
+        payout=calculate_parlay_payout(picks,stake)
+        parlays.append({"parlay":picks,"payout":payout})
+    return parlays
 
-# -------------------
-# SIDEBAR SETTINGS
-# -------------------
-st.sidebar.header("Settings")
-sport_choice = st.sidebar.selectbox("Select Sport", list(SPORTS.keys()))
-bankroll = st.sidebar.number_input("Your Bankroll ($)", min_value=10, value=1000, step=50)
-fractional_kelly = st.sidebar.slider("Fractional Kelly Fraction", 0.0, 1.0, 0.25, step=0.05)
-min_edge_pct = st.sidebar.slider("Minimum Edge % to show", 0.0, 100.0, 1.0, step=0.5)
-bet_type_filter = st.sidebar.multiselect("Show bet types", ["Moneyline","Spread","Totals","All"], default=["All"])
-if "All" in bet_type_filter:
-    bet_type_filter = ["Moneyline","Spread","Totals"]
-use_weather = st.sidebar.checkbox("Adjust predictions for weather", value=True)
+def format_parlay_text(parlay):
+    text=""
+    for pick in parlay:
+        team=pick.get("team","")
+        text+=f"{pick['type']} | {team} | {pick['value']}\n"
+    return text
 
-# -------------------
-# FETCH ODDS
-# -------------------
-def fetch_odds(sport_key):
-    url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
-    params = {"apiKey": API_KEY_ODDS, "regions": REGIONS, "markets": ",".join(MARKETS), "oddsFormat": "decimal"}
-    try:
-        r = requests.get(url, params=params)
-        if r.status_code == 200:
-            return r.json()
-        return []
-    except:
-        return []
+def format_parlay_html(parlay):
+    html_text=""
+    for pick in parlay:
+        team=pick.get("team","")
+        color="green" if pick["type"]=="ML" else "orange"
+        html_text+=f"<span style='color:{color}'>{pick['type']} | {team} | {pick['value']}</span><br>"
+    return html_text
 
-# -------------------
-# FETCH WEATHER
-# -------------------
-def fetch_weather(lat, lon):
-    try:
-        url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={API_KEY_WEATHER}&units=imperial"
-        r = requests.get(url)
-        data = r.json()
-        desc = data['weather'][0]['description'].title()
-        temp = data['main']['temp']
-        wind = data['wind']['speed']
-        return f"{desc} {temp}°F, Wind {wind} mph", temp, wind, desc.lower()
-    except:
-        return "N/A", None, None, None
+def copy_button(parlay_text,key):
+    js=f"""
+    <script>
+    function copyToClipboard{key}(){{
+        navigator.clipboard.writeText(`{parlay_text}`);
+        alert('Parlay copied to clipboard!');
+    }}
+    </script>
+    <button onclick="copyToClipboard{key}()">Copy Parlay</button>
+    """
+    components.html(js,height=50)
 
-# -------------------
-# EDGE CALCULATIONS
-# -------------------
-def odds_to_prob(odds):
-    try:
-        o = float(odds)
-        if o > 1: return 1 / o
-        return -o / (1 - o)
-    except:
-        return 0.5
+# ------------------------
+# Streamlit Layout
+# ------------------------
+st.set_page_config(page_title="Sports Betting Assistant v2.5", layout="wide")
+st.title("🏈 Sports Betting Assistant v2.5")
 
-def calc_margin(p_home, p_away):
-    p_home = max(min(p_home, 0.9999), 0.0001)
-    p_away = max(min(p_away, 0.9999), 0.0001)
-    return math.log(p_home/(1-p_home)) - math.log(p_away/(1-p_away))
+stake = st.number_input("Stake per Parlay ($):",min_value=1,value=100)
+num_random = st.number_input("Number of Random Cross-Sport Parlays:",min_value=1,value=5)
+display_count = st.number_input("Top Recommended Parlays to Display:",min_value=1,value=5)
 
-# -------------------
-# BUILD RECOMMENDATIONS
-# -------------------
-def build_recommendations(games, sport_choice):
-    recs = []
-    for i, game in enumerate(games):
-        try:
-            home = game.get("home_team")
-            away = game.get("away_team")
-            week = game.get("week", None)
-            game_time = datetime.fromisoformat(game["commence_time"].replace("Z","+00:00"))
+st.markdown("## Recommended Parlays (Pick-3 to Pick-8)")
+if st.button("Generate Recommended Parlays"):
+    all_games=NFL_games+NCAA_games+MLB_games
+    recommended=generate_recommended_parlays(all_games,stake=stake,display_count=display_count)
+    for idx,p in enumerate(recommended):
+        st.markdown(f"**Parlay {idx+1}:**",unsafe_allow_html=True)
+        st.markdown(format_parlay_html(p["parlay"]),unsafe_allow_html=True)
+        st.write(f"Potential Payout: ${p['payout']}")
+        copy_button(format_parlay_text(p["parlay"]),key=f"rec{idx}")
 
-            # Example stadium coords (replace with real coordinates if available)
-            lat, lon = 40.0, -75.0
-            weather_str, temp, wind, desc = fetch_weather(lat, lon)
+st.markdown("## Random Cross-Sport Parlays (MLB + NCAA + NFL)")
+if st.button("Generate Random Cross-Sport Parlays"):
+    random_parlays=generate_random_cross_sport_parlays(NFL_games,NCAA_games,MLB_games,num_parlays=num_random,stake=stake)
+    for idx,p in enumerate(random_parlays):
+        st.markdown(f"**Parlay {idx+1}:**",unsafe_allow_html=True)
+        st.markdown(format_parlay_html(p["parlay"]),unsafe_allow_html=True)
+        st.write(f"Potential Payout: ${p['payout']}")
+        copy_button(format_parlay_text(p["parlay"]),key=f"rand{idx}")
 
-            bookmakers = game.get("bookmakers", [])
-            markets = {}
-            if bookmakers:
-                for m in bookmakers[0].get("markets", []):
-                    markets[m["key"]] = m.get("outcomes", [])
+st.markdown("## All-Time Bets Overview")
+if "tracker" not in st.session_state:
+    st.session_state["tracker"]=pd.DataFrame(columns=["Parlay","Stake","Payout","Result"])
+st.dataframe(st.session_state["tracker"])
+st.markdown("**Add Bet Result:**")
+parlay_input=st.text_area("Parlay Text")
+stake_input=st.number_input("Stake ($)",min_value=1,value=100,key="tracker_stake")
+payout_input=st.number_input("Payout ($)",min_value=1,value=100,key="tracker_payout")
+result_input=st.selectbox("Result",["Win","Loss"],key="tracker_result")
+if st.button("Add Result"):
+    new_entry={"Parlay":parlay_input,"Stake":stake_input,"Payout":payout_input,"Result":result_input}
+    st.session_state["tracker"]=pd.concat([st.session_state["tracker"],pd.DataFrame([new_entry])],ignore_index=True)
+    st.success("Result added!")
 
-            # Probabilities
-            p_home = odds_to_prob(markets.get("h2h",[{"price":2}])[0]["price"]) if markets.get("h2h") else 0.5
-            p_away = odds_to_prob(markets.get("h2h",[{"price":2}])[1]["price"]) if markets.get("h2h") else 0.5
-            predicted_margin = calc_margin(p_home, p_away)
-
-            edges = {}
-            if markets.get("h2h"):
-                edges["ML Home"] = p_home - 0.5
-                edges["ML Away"] = p_away - 0.5
-            if markets.get("spreads"):
-                edges["Spread Home"] = predicted_margin
-                edges["Spread Away"] = -predicted_margin
-            if markets.get("totals"):
-                edges["Over"] = 0.5
-                edges["Under"] = 0.5
-
-            # Point Spread
-            point_spread = None
-            if markets.get("spreads"):
-                for outcome in markets["spreads"]:
-                    if "point" in outcome:
-                        point_spread = outcome["point"]
-
-            # Adjust edges for weather if enabled
-            if use_weather:
-                if wind and wind > 15:
-                    if "Over" in edges:
-                        edges["Over"] -= 0.1
-                    if "Under" in edges:
-                        edges["Under"] += 0.1
-                    edges["Spread Home"] *= 0.9
-                    edges["Spread Away"] *= 0.9
-                if "rain" in (desc or "") or "snow" in (desc or ""):
-                    edges = {k: v*0.85 for k,v in edges.items()}
-                if temp and temp > 95:
-                    edges = {k: v*0.95 for k,v in edges.items()}
-
-            if edges:
-                best_key = max(edges, key=lambda x: edges[x])
-                edge_pct = edges[best_key]*100
-
-                if best_key.startswith("ML"):
-                    bet_type = "Moneyline"
-                    selection = home if "Home" in best_key else away
-                    opponent = away if "Home" in best_key else home
-                elif best_key.startswith("Spread"):
-                    bet_type = "Spread"
-                    selection = home if "Home" in best_key else away
-                    opponent = away if "Home" in best_key else home
-                else:
-                    bet_type = "Totals"
-                    selection = best_key
-                    opponent = f"{away} @ {home}"
-
-                if bet_type in bet_type_filter and edge_pct >= min_edge_pct:
-                    stake = bankroll * fractional_kelly * max(0, edges[best_key])
-                    recs.append({
-                        "record_id": f"{sport_choice}_{i}_{int(datetime.utcnow().timestamp())}",
-                        "timestamp": datetime.utcnow(),
-                        "sport": sport_choice,
-                        "week": week,
-                        "home_team": home,
-                        "away_team": away,
-                        "matchup": f"{away} @ {home}",
-                        "game_time": game_time,
-                        "bet_type": bet_type,
-                        "selection": selection,
-                        "opponent": opponent,
-                        "edge_pct": round(edge_pct,2),
-                        "stake": round(stake,2),
-                        "predicted_margin": round(predicted_margin,2),
-                        "point_spread": point_spread,
-                        "weather": weather_str,
-                        "status": "PENDING"
-                    })
-        except:
-            continue
-    return pd.DataFrame(recs)
-
-# -------------------
-# FETCH & BUILD
-# -------------------
-all_games = []
-for s in SPORTS.keys():
-    games = fetch_odds(SPORTS[s])
-    all_games.extend(build_recommendations(games, s).to_dict("records") if games else [])
-
-if all_games:
-    new_df = pd.DataFrame(all_games)
-    bets_df = pd.concat([bets_df, new_df]).drop_duplicates(subset=["record_id"], keep="first").reset_index(drop=True)
-
-# -------------------
-# COLOR-CODING
-# -------------------
-def style_row(row):
-    edge = row["edge_pct"]
-    status = row["status"]
-    if status=="WON":
-        return ["background-color: #ADD8E6; color: black"]*len(row)
-    elif status=="LOST":
-        return ["background-color: #D3D3D3; color: black"]*len(row)
-    elif edge >= 5:
-        return ["background-color: #9AFF99; color: black"]*len(row)
-    elif edge >= 2:
-        return ["background-color: #FFFF99; color: black"]*len(row)
-    else:
-        return ["background-color: #FF9999; color: black"]*len(row)
-
-# -------------------
-# RECOMMENDED PARLAYS (Pick-3 to Pick-8)
-# -------------------
-st.subheader("Recommended Parlays (Pick-3 to Pick-8)")
-top_bets = bets_df[bets_df["status"]=="PENDING"].sort_values(by="edge_pct", ascending=False).head(10)
-parlays = []
-
-for r in range(3,9):
-    for combo in itertools.combinations(top_bets.index, r):
-        selections = [top_bets.loc[i, "selection"] for i in combo]
-        matchups = [top_bets.loc[i, "matchup"] for i in combo]
-        expected_edge = 1
-        for i in combo:
-            expected_edge *= top_bets.loc[i, "edge_pct"] / 100
-        expected_edge *= 100
-        parlays.append({
-            "Parlay": " + ".join(selections),
-            "Games": " + ".join(matchups),
-            "Expected Edge %": round(expected_edge,2),
-            "Pick Count": r
-        })
-
-parlays_df = pd.DataFrame(parlays).sort_values(by="Expected Edge %", ascending=False)
-if not parlays_df.empty:
-    st.dataframe(parlays_df, use_container_width=True)
-else:
-    st.write("No parlays available with current settings.")
-
-# -------------------
-# TRUE CROSS-SPORT RANDOM PARLAYS
-# -------------------
-st.subheader("Random Cross-Sport Parlays (MLB + NCAA + NFL)")
-all_top_bets = bets_df[(bets_df["status"]=="PENDING") & (bets_df["edge_pct"]>=2)]
-random_parlays = []
-
-if not all_top_bets.empty:
-    for _ in range(5):
-        combo = all_top_bets.sample(min(3, len(all_top_bets)))
-        selections = combo["selection"].tolist()
-        matchups = combo["matchup"].tolist()
-        expected_edge = 1
-        for val in combo["edge_pct"]:
-            expected_edge *= val/100
-        expected_edge *= 100
-        random_parlays.append({
-            "Parlay": " + ".join(selections),
-            "Games": " + ".join(matchups),
-            "Expected Edge %": round(expected_edge,2)
-        })
-    st.dataframe(pd.DataFrame(random_parlays), use_container_width=True)
-else:
-    st.write("Not enough high-edge bets across sports to create random cross-sport parlays.")
-
-# -------------------
-# DISPLAY W/L TABLE
-# -------------------
-st.header("All-Time Bets Overview")
-st.dataframe(bets_df.style.apply(style_row, axis=1), use_container_width=True)
-
-# -------------------
-# UPDATE PENDING BETS
-# -------------------
-pending = bets_df[bets_df["status"]=="PENDING"]
-if not pending.empty:
-    st.subheader("Update Pending Bets")
-    pending_opts = pending["record_id"].astype(str).tolist()
-    chosen_pending = st.multiselect("Select pending bets to mark", pending_opts)
-    result_choice = st.radio("Mark as", ["WON","LOST"], index=1)
-    if st.button("Apply Result"):
-        for rid in chosen_pending:
-            idx = bets_df[bets_df["record_id"].astype(str)==rid].index
-            if len(idx)==0: continue
-            bets_df.loc[idx,"status"] = result_choice
-        bets_df.to_csv(BETS_LOG,index=False)
-        st.success("Updated pending bets.")
-
-# -------------------
-# ALL-TIME RECORD
-# -------------------
-if not bets_df.empty:
-    wins = len(bets_df[bets_df["status"]=="WON"])
-    losses = len(bets_df[bets_df["status"]=="LOST"])
-    st.subheader("All-Time Record")
-    st.write(f"Wins: {wins} | Losses: {losses} | Total Bets: {wins + losses}")
-
-# -------------------
-# NFL FANTASY PROJECTIONS
-# -------------------
-st.subheader("NFL Fantasy Player Projections (Top 50)")
-def fetch_nfl_fantasy():
-    url = "https://api.sleeper.app/v1/players/nfl"
-    r = requests.get(url)
-    if r.status_code == 200:
-        data = r.json()
-        fantasy_df = pd.DataFrame([
-            {
-                "Player": p["full_name"],
-                "Team": p["team"],
-                "Position": p["position"],
-                "Fantasy Points": p.get("fantasy_points", None)
-            }
-            for p in data.values() if p.get("fantasy_points")
-        ])
-        return fantasy_df
-    else:
-        return pd.DataFrame()
-
-fantasy_df = fetch_nfl_fantasy()
-if not fantasy_df.empty:
-    st.dataframe(fantasy_df.sort_values("Fantasy Points", ascending=False).head(50), use_container_width=True)
-else:
-    st.write("No fantasy data available.")
+st.markdown("## NFL Fantasy Picks")
+if st.button("Generate NFL Fantasy Picks"):
+    st.subheader("Fantasy Picks by Position")
+    stat_avg={"Passing Yards":280,"Rushing Yards":80,"Rec Yards":90,"Points Allowed":22,"Field Goals Made":2}
+    for f in Fantasy_NFL_players:
+        rec="Over" if f["projection"]>stat_avg.get(f["stat"],0) else "Under"
+        color="green" if rec=="Over" else "red"
+        st.markdown(f"<span style='color:{color}'>{f['position']} | {f['player']} | {f['stat']} {f['projection']} | {rec}</span>",unsafe_allow_html=True)
