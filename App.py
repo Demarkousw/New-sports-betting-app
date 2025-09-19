@@ -3,12 +3,13 @@ import pandas as pd
 import requests
 from datetime import datetime
 
-st.title("Football Betting App — NFL Best Bets")
+st.title("NFL Betting App — Best Bets & Edge Calculator")
 
-# --- Settings Sidebar ---
+# --- Sidebar Settings ---
 st.sidebar.header("Betting Settings")
-bankroll = st.sidebar.number_input("Bankroll ($)", min_value=0, value=1000)
+bankroll = st.sidebar.number_input("Bankroll ($)", min_value=100, value=1000, step=100)
 fractional_kelly = st.sidebar.slider("Fractional Kelly", 0.1, 1.0, 0.5)
+min_edge = st.sidebar.slider("Minimum Edge % to Show", 0.0, 50.0, 5.0)
 
 # --- API Setup ---
 API_KEY = "8a264564e3a5d2a556d475e547e1c417"
@@ -65,6 +66,12 @@ for game in data:
 
 df = pd.DataFrame(games)
 
+# --- Figure Out Week Number ---
+if not df.empty:
+    start_date = min(df["game_time"])
+    week_num = ((max(df["game_time"]) - start_date).days // 7) + 1
+    st.subheader(f"Current NFL Week: {week_num}")
+
 # --- Convert Odds to Probabilities ---
 def odds_to_prob(odds):
     if odds is None:
@@ -85,7 +92,6 @@ for idx, row in df.iterrows():
         "Under": 0.5 - odds_to_prob(row["under"]),
     }
 
-    # Best bet for this game
     best_bet = max(edges, key=edges.get)
     best_edge = edges[best_bet]
     stake = bankroll * fractional_kelly * max(0, best_edge)
@@ -100,14 +106,15 @@ for idx, row in df.iterrows():
         selection = best_bet
         opponent = f"{row['away']} @ {row['home']}"
 
-    recommendations.append({
-        "Matchup": f"{row['away']} @ {row['home']}",
-        "Best Bet": best_bet,
-        "Selection": selection,
-        "Opponent": opponent,
-        "Edge %": round(best_edge*100, 2),
-        "Stake $": round(stake, 2)
-    })
+    if best_edge * 100 >= min_edge:
+        recommendations.append({
+            "Matchup": f"{row['away']} @ {row['home']}",
+            "Best Bet": best_bet,
+            "Selection": selection,
+            "Opponent": opponent,
+            "Edge %": round(best_edge*100, 2),
+            "Stake $": round(stake, 2)
+        })
 
 # --- Show All Odds ---
 st.subheader("All Games & Odds")
