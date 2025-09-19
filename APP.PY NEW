@@ -1,4 +1,4 @@
-# App.py - Sports Betting Assistant v2.5
+# App.py - Sports Betting Assistant v2.6 (with API Debug)
 import streamlit as st
 import requests
 import pandas as pd
@@ -6,12 +6,11 @@ from datetime import datetime
 import os
 import math
 import itertools
-import random
 
 # -------------------
 # CONFIG: API KEYS
 # -------------------
-API_KEY_ODDS = "c5eece64b53f2c9622543faf5861555d"      # Odds API key
+API_KEY_ODDS = "8a264564e3a5d2a556d475e547e1c417"      # Odds API key (NEW)
 API_KEY_WEATHER = "5ec258afff830598e45caad47e3edb8e"   # OpenWeatherMap key
 
 # -------------------
@@ -53,8 +52,8 @@ bets_df = load_or_create_csv(BETS_LOG, BETS_COLS)
 # -------------------
 # STREAMLIT UI
 # -------------------
-st.set_page_config(layout="wide", page_title="Sports Betting Assistant v2.5")
-st.title("Sports Betting Assistant v2.5 — Visual Edge & Tracking")
+st.set_page_config(layout="wide", page_title="Sports Betting Assistant v2.6")
+st.title("Sports Betting Assistant v2.6 — Visual Edge & Tracking")
 
 # Sidebar
 st.sidebar.header("Settings")
@@ -65,7 +64,6 @@ min_edge_pct = st.sidebar.slider("Minimum Edge %", 0.0, 100.0, 1.0, step=0.5)
 bet_type_filter = st.sidebar.multiselect("Bet types", ["Moneyline","Spread","Totals","All"], default=["All"])
 if "All" in bet_type_filter:
     bet_type_filter = ["Moneyline","Spread","Totals"]
-use_weather = st.sidebar.checkbox("Weather adjustments", value=True)
 
 # -------------------
 # HELPERS
@@ -96,19 +94,6 @@ def fetch_odds_for_sport(sport_key):
     except Exception:
         return []
 
-def fetch_weather(lat, lon):
-    try:
-        url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={API_KEY_WEATHER}&units=imperial"
-        r = requests.get(url,timeout=8)
-        r.raise_for_status()
-        d = r.json()
-        desc = d['weather'][0]['description'].title()
-        temp = d['main'].get('temp',None)
-        wind = d.get('wind',{}).get('speed',None)
-        return f"{desc} {temp}°F, Wind {wind} mph"
-    except:
-        return "N/A"
-
 # -------------------
 # BUILD RECOMMENDATIONS
 # -------------------
@@ -117,7 +102,6 @@ def build_recs(game,sport_name):
         home, away = game.get("home_team"), game.get("away_team")
         commence = game.get("commence_time")
         game_time = datetime.fromisoformat(commence.replace("Z","+00:00")) if commence else None
-        weather = fetch_weather(40.0,-75.0)  # placeholder coords
         bookmakers = game.get("bookmakers",[])
         markets = {}
         if bookmakers:
@@ -159,7 +143,7 @@ def build_recs(game,sport_name):
             "bet_type":bt,"selection":sel,"opponent":opp,
             "edge_pct":round(edge_pct,2),"stake":stake,
             "predicted_margin":round(margin,2),
-            "point_spread":None,"weather":weather,"status":"PENDING"
+            "point_spread":None,"weather":"N/A","status":"PENDING"
         }
     except:
         return None
@@ -181,6 +165,19 @@ with st.spinner("Fetching odds..."):
     if not new.empty:
         bets_df=pd.concat([bets_df,new]).drop_duplicates(subset=["record_id"],keep="first")
 
+# --- Debug Odds API status ---
+try:
+    status_url = f"https://api.the-odds-api.com/v4/sports?apiKey={API_KEY_ODDS}"
+    r = requests.get(status_url, timeout=8)
+    if r.status_code == 200:
+        st.sidebar.success("✅ Odds API key is valid")
+        st.sidebar.write("Sports available:")
+        st.sidebar.json(r.json()[:3])  # preview first 3 sports
+    else:
+        st.sidebar.error(f"❌ Odds API error: {r.status_code} - {r.text}")
+except Exception as e:
+    st.sidebar.error(f"Odds API check failed: {e}")
+
 # Parlays
 st.subheader("Recommended Parlays (Pick-3 to Pick-8)")
 top=bets_df[bets_df["status"]=="PENDING"].sort_values("edge_pct",ascending=False).head(10)
@@ -193,18 +190,6 @@ if len(top)>=3:
     st.dataframe(pd.DataFrame(parlays))
 else:
     st.write("Not enough bets yet.")
-
-# Random cross-sport parlays
-st.subheader("Random Cross-Sport Parlays")
-all_pending = bets_df[bets_df["status"]=="PENDING"]
-if len(all_pending) >= 3:
-    random_parlays=[]
-    for _ in range(5):  # show 5 random parlays
-        sample = all_pending.sample(min(5, len(all_pending)))
-        random_parlays.append({"Random Parlay":" + ".join(sample["selection"].tolist())})
-    st.dataframe(pd.DataFrame(random_parlays))
-else:
-    st.write("Not enough pending bets for random parlays.")
 
 # All bets table
 st.header("All Bets")
@@ -243,16 +228,3 @@ st.dataframe(bets_df[bets_df["sport"]=="NCAA Football"][["matchup","weather"]])
 
 st.subheader("MLB — Matchups (placeholder)")
 st.dataframe(bets_df[bets_df["sport"]=="MLB"][["matchup","weather"]])
-
-# Instructions
-with st.expander("How to Use"):
-    st.markdown("""
-- **Odds & Parlays**: Auto-pulled for NFL, NCAA, MLB.
-- **Colors**: Green = strong, Yellow = medium, Red = weak, Blue = won, Gray = lost.
-- **Update Pending Bets**: Use this box to mark bets WON or LOST.
-- **Record**: Tracks your all-time win/loss record.
-- **Cross-Sport Parlays**: Randomly mixes NFL/NCAA/MLB bets.
-- **APIs**:
-  - Odds API: https://the-odds-api.com
-  - Weather API: https://openweathermap.org
-""") 
