@@ -255,4 +255,4 @@ with st.expander("How to Use"):
 - **APIs**:
   - Odds API: https://the-odds-api.com
   - Weather API: https://openweathermap.org
-""")
+""") 
