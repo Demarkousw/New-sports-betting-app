@@ -8,16 +8,24 @@ import math
 # -------------------
 # CONFIG
 # -------------------
-API_KEY = "c5eece64b53f2c9622543faf5861555d"  # <-- Your valid key
+API_KEY_ODDS = "c5eece64b53f2c9622543faf5861555d"  # Odds API key
+API_KEY_WEATHER = "5ec258afff830598e45caad47e3edb8e"  # OpenWeatherMap API key
+
 SPORTS = {
     "NFL": "americanfootball_nfl",
-    "NCAA Football": "americanfootball_ncaaf"
+    "NCAA Football": "americanfootball_ncaaf",
+    "MLB": "baseball_mlb"
 }
+
 REGIONS = "us"
 MARKETS = ["h2h", "spreads", "totals"]
 
 BETS_LOG = "bets_log.csv"
-BETS_COLS = ["record_id","timestamp","sport","matchup","game_time","bet_type","selection","opponent","edge_pct","stake","predicted_margin","status"]
+BETS_COLS = [
+    "record_id","timestamp","sport","week","home_team","away_team","matchup",
+    "game_time","bet_type","selection","opponent","edge_pct","stake",
+    "predicted_margin","weather","status"
+]
 
 # -------------------
 # UTILITIES
@@ -41,8 +49,8 @@ bets_df = load_or_create_csv(BETS_LOG, BETS_COLS)
 # -------------------
 # APP HEADER
 # -------------------
-st.set_page_config(layout="wide", page_title="Sports Betting Assistant v2.0")
-st.title("Sports Betting Assistant v2.0 — Full Automation & Tracking")
+st.set_page_config(layout="wide", page_title="Sports Betting Assistant v2.2")
+st.title("Sports Betting Assistant v2.2 — Weather & Full Tracking")
 
 # -------------------
 # SIDEBAR SETTINGS
@@ -55,13 +63,14 @@ min_edge_pct = st.sidebar.slider("Minimum Edge % to show", 0.0, 100.0, 1.0, step
 bet_type_filter = st.sidebar.multiselect("Show bet types", ["Moneyline","Spread","Totals","All"], default=["All"])
 if "All" in bet_type_filter:
     bet_type_filter = ["Moneyline","Spread","Totals"]
+use_weather = st.sidebar.checkbox("Adjust predictions for weather", value=True)
 
 # -------------------
 # FETCH ODDS
 # -------------------
 def fetch_odds(sport_key):
     url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
-    params = {"apiKey": API_KEY, "regions": REGIONS, "markets": ",".join(MARKETS), "oddsFormat": "decimal"}
+    params = {"apiKey": API_KEY_ODDS, "regions": REGIONS, "markets": ",".join(MARKETS), "oddsFormat": "decimal"}
     try:
         r = requests.get(url, params=params)
         if r.status_code == 200:
@@ -69,6 +78,21 @@ def fetch_odds(sport_key):
         return []
     except:
         return []
+
+# -------------------
+# FETCH WEATHER
+# -------------------
+def fetch_weather(lat, lon):
+    try:
+        url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={API_KEY_WEATHER}&units=imperial"
+        r = requests.get(url)
+        data = r.json()
+        desc = data['weather'][0]['description'].title()
+        temp = data['main']['temp']
+        wind = data['wind']['speed']
+        return f"{desc} {temp}°F, Wind {wind} mph", temp, wind, desc.lower()
+    except:
+        return "N/A", None, None, None
 
 # -------------------
 # EDGE CALCULATIONS
@@ -95,14 +119,20 @@ def build_recommendations(games):
         try:
             home = game.get("home_team")
             away = game.get("away_team")
+            week = game.get("week", None)
             game_time = datetime.fromisoformat(game["commence_time"].replace("Z","+00:00"))
+
+            # Example stadium coords (NFL) – replace with real coordinates if available
+            lat, lon = 40.0, -75.0
+            weather_str, temp, wind, desc = fetch_weather(lat, lon)
+
             bookmakers = game.get("bookmakers", [])
             markets = {}
             if bookmakers:
                 for m in bookmakers[0].get("markets", []):
                     markets[m["key"]] = m.get("outcomes", [])
 
-            # Probabilities & margins
+            # Probabilities
             p_home = odds_to_prob(markets.get("h2h",[{"price":2}])[0]["price"]) if markets.get("h2h") else 0.5
             p_away = odds_to_prob(markets.get("h2h",[{"price":2}])[1]["price"]) if markets.get("h2h") else 0.5
             predicted_margin = calc_margin(p_home, p_away)
@@ -117,6 +147,20 @@ def build_recommendations(games):
             if markets.get("totals"):
                 edges["Over"] = 0.5
                 edges["Under"] = 0.5
+
+            # Adjust edges for weather if enabled
+            if use_weather:
+                if wind and wind > 15:
+                    if "Over" in edges:
+                        edges["Over"] -= 0.1
+                    if "Under" in edges:
+                        edges["Under"] += 0.1
+                    edges["Spread Home"] *= 0.9
+                    edges["Spread Away"] *= 0.9
+                if "rain" in (desc or "") or "snow" in (desc or ""):
+                    edges = {k: v*0.85 for k,v in edges.items()}
+                if temp and temp > 95:
+                    edges = {k: v*0.95 for k,v in edges.items()}
 
             if edges:
                 best_key = max(edges, key=lambda x: edges[x])
@@ -141,6 +185,9 @@ def build_recommendations(games):
                         "record_id": f"{i}_{int(datetime.utcnow().timestamp())}",
                         "timestamp": datetime.utcnow(),
                         "sport": sport_choice,
+                        "week": week,
+                        "home_team": home,
+                        "away_team": away,
                         "matchup": f"{away} @ {home}",
                         "game_time": game_time,
                         "bet_type": bet_type,
@@ -149,6 +196,7 @@ def build_recommendations(games):
                         "edge_pct": round(edge_pct,2),
                         "stake": round(stake,2),
                         "predicted_margin": round(predicted_margin,2),
+                        "weather": weather_str,
                         "status": "PENDING"
                     })
         except:
@@ -156,16 +204,14 @@ def build_recommendations(games):
     return pd.DataFrame(recs)
 
 # -------------------
-# FETCH AND BUILD
+# FETCH & BUILD
 # -------------------
 games = fetch_odds(SPORTS[sport_choice])
 recs_df = build_recommendations(games) if games else pd.DataFrame(columns=BETS_COLS)
-
-# Merge with existing bets
 bets_df = pd.concat([bets_df, recs_df]).drop_duplicates(subset=["record_id"], keep="first").reset_index(drop=True)
 
 # -------------------
-# COLOR-CODING FUNCTION
+# COLOR-CODING
 # -------------------
 def style_row(row):
     edge = row["edge_pct"]
@@ -182,7 +228,7 @@ def style_row(row):
         return ["background-color: #FF9999; color: black"]*len(row)
 
 # -------------------
-# DISPLAY TABLE
+# DISPLAY
 # -------------------
 st.header(f"{sport_choice} Bets Overview")
 st.dataframe(bets_df.style.apply(style_row, axis=1), use_container_width=True)
@@ -211,17 +257,4 @@ if not bets_df.empty:
     wins = len(bets_df[bets_df["status"]=="WON"])
     losses = len(bets_df[bets_df["status"]=="LOST"])
     st.subheader("All-Time Record")
-    st.write(f"Wins: {wins} | Losses: {losses} | Total Bets: {wins+losses}")
-
-# -------------------
-# INSTRUCTIONS
-# -------------------
-with st.expander("Instructions"):
-    st.markdown("""
-1. Select a sport and adjust bankroll & settings.
-2. Recommended bets appear automatically in the table.
-3. Row colors indicate edge strength (green=strong, yellow=moderate, red=weak).
-4. Track bets by marking pending bets as WON or LOST.
-5. Edge % and stake are calculated automatically.
-6. Win/Loss is visible in the first column for resolved bets.
-""")
+    st.write(f"Wins: {wins} | Losses: {losses} | Total Bets
