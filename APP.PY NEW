@@ -1,16 +1,14 @@
-# App.py — Betting Dashboard v2.1
+# App.py — Betting Dashboard v2.1 (fixed: safe CSV handling)
 # Features: NFL / NCAAF / MLB; color-coded table; simulate bets; track wins/losses; download; logging
-
 import streamlit as st
 import pandas as pd
 import requests
 from datetime import datetime
 import math
-import io
 import os
 
-st.set_page_config(layout="wide", page_title="Betting Dashboard v2.1")
-st.title("Betting Dashboard v2.1 — Live Odds, Simulator & Tracker")
+st.set_page_config(layout="wide", page_title="Betting Dashboard v2.1 (Fixed)")
+st.title("Betting Dashboard v2.1 — Live Odds, Simulator & Tracker (Fixed)")
 
 # -------------------------
 # Sidebar: global settings
@@ -26,7 +24,7 @@ bet_type_filter = st.sidebar.multiselect("Show bet types", ["Moneyline","Spread"
 if "All" in bet_type_filter:
     bet_type_filter = ["Moneyline","Spread","Totals"]
 
-# API key (you provided earlier)
+# API key (use your key)
 API_KEY = "8a264564e3a5d2a556d475e547e1c417"
 
 # sport mapping and league averages (fallback)
@@ -41,7 +39,45 @@ st.sidebar.markdown(f"**League avg total (fallback):** {default_league_total}")
 # Files for persistent storage
 BETS_LOG = "bets_log.csv"        # records bets placed (pending + recorded)
 RESULTS_LOG = "results.csv"      # records resolved bets (won/lost)
-APP_LOG = "app_log.txt"
+
+# Expected columns for CSVs
+BETS_COLS = [
+    "record_id","timestamp","sport","matchup","game_time","bet_type","selection","opponent",
+    "edge_pct","stake","market_total","model_total","predicted_margin","status"
+]
+RESULTS_COLS = ["record_id","timestamp","sport","matchup","bet_type","selection","stake","edge_pct","result"]
+
+# -------------------------
+# Helpers: CSV load/create safe
+# -------------------------
+def load_or_create_csv(path, cols):
+    """
+    Load CSV if exists, otherwise return empty DataFrame with given columns.
+    Also ensures missing columns are added if file exists but columns differ.
+    """
+    if os.path.exists(path):
+        try:
+            df = pd.read_csv(path)
+            # ensure all required columns present
+            for c in cols:
+                if c not in df.columns:
+                    df[c] = pd.NA
+            # keep only expected cols (preserve order)
+            df = df[cols + [c for c in df.columns if c not in cols]]
+            return df
+        except Exception:
+            # if file corrupted/unreadable, rename and create new
+            try:
+                os.rename(path, path + ".bak")
+            except Exception:
+                pass
+            return pd.DataFrame(columns=cols)
+    else:
+        return pd.DataFrame(columns=cols)
+
+# Initialize logs safely
+bets_df = load_or_create_csv(BETS_LOG, BETS_COLS)
+results_df = load_or_create_csv(RESULTS_LOG, RESULTS_COLS)
 
 # -------------------------
 # Utility: fetch odds with fallback
@@ -56,9 +92,9 @@ def fetch_odds_with_fallback(sport_api_key):
             r.raise_for_status()
             st.info(f"Using markets: {markets}")
             return r.json()
-        except requests.HTTPError as e:
-            last_err = f"{markets} -> {e}"
-            st.warning(f"Markets '{markets}' not available or returned error.")
+        except requests.HTTPError:
+            last_err = f"{markets} -> HTTPError"
+            st.warning(f"Markets '{markets}' not available or returned HTTP error; trying next combo.")
             continue
         except Exception as e:
             last_err = str(e)
@@ -96,7 +132,6 @@ for game in data:
             outcomes = m.get("outcomes") or []
             if key == "h2h" and len(outcomes) >= 2:
                 names = [o.get("name","") for o in outcomes]
-                # try map by name
                 if home in names and away in names:
                     if outcomes[0].get("name") == home:
                         ml_home = outcomes[0].get("price"); ml_away = outcomes[1].get("price")
@@ -105,12 +140,9 @@ for game in data:
                 else:
                     ml_home = outcomes[0].get("price"); ml_away = outcomes[1].get("price")
             elif key == "spreads" and len(outcomes) >= 2:
-                # assign by ordering or name
+                # assign by ordering (many providers use home/away ordering)
                 try:
-                    if outcomes[0].get("name") and home in outcomes[0].get("name"):
-                        spread_home = outcomes[0].get("point"); spread_away = outcomes[1].get("point")
-                    else:
-                        spread_home = outcomes[0].get("point"); spread_away = outcomes[1].get("point")
+                    spread_home = outcomes[0].get("point"); spread_away = outcomes[1].get("point")
                 except:
                     spread_home = outcomes[0].get("point"); spread_away = outcomes[1].get("point")
             elif key == "totals" and len(outcomes) >= 1:
@@ -246,28 +278,11 @@ for i, row in df.iterrows():
 st.subheader("Recommended Value Bets (sorted by Edge %)")
 if recommendations:
     rec_df = pd.DataFrame(recommendations).sort_values(by="Edge %", ascending=False)
-    # convert game time to str
     rec_df_display = rec_df.copy()
     rec_df_display["Game Time"] = rec_df_display["Game Time"].astype(str)
 
-    # styling function
-    def color_edge(val):
-        try:
-            v = float(val)
-        except:
-            return ""
-        if v >= 10:
-            color = 'background-color: #2ECC71'  # green
-        elif v >= 3:
-            color = 'background-color: #F1C40F'  # yellow
-        elif v > 0:
-            color = 'background-color: #F7DC6F'  # light yellow
-        else:
-            color = 'background-color: #E74C3C'  # red
-        return color
-
-    styled = rec_df_display.style.applymap(color_edge, subset=["Edge %"])
-    st.dataframe(rec_df_display)  # also show plain dataframe for reliability
+    # plain display (stable)
+    st.dataframe(rec_df_display)
 
     # Download button
     csv_bytes = rec_df_display.to_csv(index=False).encode('utf-8')
@@ -275,9 +290,6 @@ if recommendations:
 
     # Selection for recording bets
     st.markdown("## Record bets you placed (simulate)")
-    rec_df_select = rec_df_display.copy()
-    rec_df_select["choose"] = False
-    # show a multiselect with Matchup + Bet Type
     options = [f"{r['Matchup']} | {r['Bet Type']} | {r['Selection']} | Edge {r['Edge %']}%" for _, r in rec_df.iterrows()]
     chosen = st.multiselect("Select recommendations you actually placed", options)
 
@@ -285,7 +297,6 @@ if recommendations:
         to_record = []
         timestamp = datetime.utcnow().isoformat()
         for opt in chosen:
-            # find row
             idx = options.index(opt)
             row = rec_df.iloc[idx].to_dict()
             record = {
@@ -305,14 +316,10 @@ if recommendations:
                 "status": "PENDING"
             }
             to_record.append(record)
-        # append to bets_log.csv
         if to_record:
             df_new = pd.DataFrame(to_record)
-            if os.path.exists(BETS_LOG):
-                df_old = pd.read_csv(BETS_LOG)
-                df_all = pd.concat([df_old, df_new], ignore_index=True)
-            else:
-                df_all = df_new
+            existing = load_or_create_csv(BETS_LOG, BETS_COLS)
+            df_all = pd.concat([existing, df_new], ignore_index=True)
             df_all.to_csv(BETS_LOG, index=False)
             st.success(f"Recorded {len(to_record)} bets to {BETS_LOG}")
         else:
@@ -324,76 +331,74 @@ else:
 # Bet Tracker: view pending bets and mark as won/lost
 # -------------------------
 st.header("Bet Tracker — mark results (Wins / Losses)")
-if os.path.exists(BETS_LOG):
-    bets_df = pd.read_csv(BETS_LOG)
-    # show pending bets first
-    pending = bets_df[bets_df["status"] == "PENDING"]
-    st.subheader("Pending Bets")
-    if not pending.empty:
-        pending_display = pending.copy()
-        st.dataframe(pending_display)
-        # allow marking by selecting record_id
-        pending_options = pending["record_id"].tolist()
-        chosen_pending = st.multiselect("Select pending bets to mark result", pending_options)
-        result_choice = st.radio("Mark selected as:", ["WON", "LOST"], index=1)
-        if st.button("Apply Result to Selected"):
-            if not chosen_pending:
-                st.info("No pending bets selected.")
-            else:
-                # move selected to results log and update bets_log status
-                results = []
-                for rid in chosen_pending:
-                    row = pending[pending["record_id"] == rid].iloc[0].to_dict()
-                    res = {
-                        "record_id": row["record_id"],
-                        "timestamp": datetime.utcnow().isoformat(),
-                        "sport": row.get("sport"),
-                        "matchup": row.get("matchup"),
-                        "bet_type": row.get("bet_type"),
-                        "selection": row.get("selection"),
-                        "stake": row.get("stake"),
-                        "edge_pct": row.get("edge_pct"),
-                        "result": result_choice
-                    }
-                    results.append(res)
-                    # update bets_df status
-                    bets_df.loc[bets_df["record_id"] == rid, "status"] = result_choice
-                # save updated bets_log
-                bets_df.to_csv(BETS_LOG, index=False)
-                # append to RESULTS_LOG
-                if os.path.exists(RESULTS_LOG):
-                    old_res = pd.read_csv(RESULTS_LOG)
-                    new_res = pd.concat([old_res, pd.DataFrame(results)], ignore_index=True)
-                else:
-                    new_res = pd.DataFrame(results)
-                new_res.to_csv(RESULTS_LOG, index=False)
-                st.success(f"Marked {len(results)} bets as {result_choice} and updated logs.")
-    else:
-        st.write("No pending bets.")
-    # show historic results summary
-    if os.path.exists(RESULTS_LOG):
-        res_df = pd.read_csv(RESULTS_LOG)
-        total = len(res_df)
-        wins = len(res_df[res_df["result"] == "WON"])
-        losses = len(res_df[res_df["result"] == "LOST"])
-        roi = None
-        # compute simple ROI if stakes and wins known
-        try:
-            res_df["stake"] = pd.to_numeric(res_df["stake"], errors='coerce').fillna(0.0)
-            # assume payout equal to stake * (1 + implied avg ROI) — impossible to compute without odds; skip ROI accuracy
-            roi = None
-        except:
-            roi = None
-        st.subheader("All-time Record")
-        st.write(f"Total resolved bets: {total} — Wins: {wins} — Losses: {losses}")
+
+bets_df = load_or_create_csv(BETS_LOG, BETS_COLS)  # reload to pick up new records
+# Ensure 'status' column exists (defensive)
+if "status" not in bets_df.columns:
+    bets_df["status"] = pd.NA
+
+pending = bets_df[bets_df["status"] == "PENDING"] if not bets_df.empty else pd.DataFrame(columns=BETS_COLS)
+st.subheader("Pending Bets")
+if not pending.empty:
+    pending_display = pending.copy()
+    st.dataframe(pending_display)
+    pending_options = pending["record_id"].astype(str).tolist()
+    chosen_pending = st.multiselect("Select pending bets to mark result", pending_options)
+    result_choice = st.radio("Mark selected as:", ["WON", "LOST"], index=1)
+    if st.button("Apply Result to Selected"):
+        if not chosen_pending:
+            st.info("No pending bets selected.")
+        else:
+            results_to_append = []
+            for rid in chosen_pending:
+                # locate row (string comparison)
+                row_idx = bets_df[bets_df["record_id"].astype(str) == str(rid)].index
+                if len(row_idx) == 0:
+                    continue
+                r = bets_df.loc[row_idx[0]].to_dict()
+                # create result record
+                res = {
+                    "record_id": r.get("record_id"),
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "sport": r.get("sport"),
+                    "matchup": r.get("matchup"),
+                    "bet_type": r.get("bet_type"),
+                    "selection": r.get("selection"),
+                    "stake": r.get("stake"),
+                    "edge_pct": r.get("edge_pct"),
+                    "result": result_choice
+                }
+                results_to_append.append(res)
+                # update bets_df status
+                bets_df.loc[row_idx, "status"] = result_choice
+            # save updated bets_log
+            bets_df.to_csv(BETS_LOG, index=False)
+            # append to results log (safe)
+            existing_res = load_or_create_csv(RESULTS_LOG, RESULTS_COLS)
+            if results_to_append:
+                df_new_res = pd.DataFrame(results_to_append)
+                df_all_res = pd.concat([existing_res, df_new_res], ignore_index=True)
+                df_all_res.to_csv(RESULTS_LOG, index=False)
+                st.success(f"Marked {len(results_to_append)} bets as {result_choice} and updated logs.")
 else:
-    st.write("No bets recorded yet. Use the 'Record Selected Bets' button above to add bets.")
+    st.write("No pending bets.")
+
+# show historic results summary
+res_df = load_or_create_csv(RESULTS_LOG, RESULTS_COLS)
+if not res_df.empty:
+    total = len(res_df)
+    wins = len(res_df[res_df["result"] == "WON"])
+    losses = len(res_df[res_df["result"] == "LOST"])
+    st.subheader("All-time Record")
+    st.write(f"Total resolved bets: {total} — Wins: {wins} — Losses: {losses}")
+else:
+    st.write("No resolved bets yet. Resolve pending bets to build history.")
 
 # -------------------------
 # Extras: Injury / Weather Hooks (placeholders)
 # -------------------------
 st.header("Injury & Weather (hooks)")
-st.info("This area is a placeholder for future integration. You can paste API keys and enable hooks later.")
+st.info("This area is a placeholder for future integration.")
 with st.expander("Injury / Weather Settings (placeholder)"):
     st.text_input("Weather API Key (paste here when available)", key="weather_key")
     st.text_input("Injury API Key (paste here when available)", key="injury_key")
@@ -407,7 +412,7 @@ with st.expander("How to use this app — Quick Instructions"):
     **Quick Start**
     1. Use the sidebar to pick sport, set bankroll, choose stake method (flat or Kelly), and filters.
     2. The app fetches live odds (Moneyline, Spread, Totals). If some market types are not available for a sport, a fallback is used.
-    3. Review the **Recommended Value Bets** table. Green = high edge, yellow = moderate, red = low/negative.
+    3. Review the **Recommended Value Bets** table.
     4. Select the recommendations you actually placed using the multiselect, then click **Record Selected Bets**. This logs them to `bets_log.csv`.
     5. When results come in, go to **Bet Tracker**, select pending bets and mark them **WON** or **LOST**. This records them to `results.csv` and updates the all-time record.
     6. Use **Download recommendations CSV** to save current picks.
@@ -415,12 +420,5 @@ with st.expander("How to use this app — Quick Instructions"):
     **Files saved on the server**
     - `bets_log.csv` — all bets you recorded (pending + marked)
     - `results.csv` — resolved bets (WON / LOST)
-    - You can download these from the app or retrieve them from your Streamlit Cloud app storage (if available).
-
-    **Notes & Tips**
-    - This app is a simulator/tracker only. It does not place real bets.
-    - Edge calculations are simplified to keep the app reliable and fast. For higher accuracy, we can integrate historical team stats, weather, and injury feeds.
-    - If a sport returns no markets in combined mode, the app automatically tries reduced market sets so it keeps working.
     """)
-
-st.success("v2.1 loaded. Read the instructions if you need help.")
+st.success("v2.1 (fixed) loaded. Read the instructions expand if you need help.")
