@@ -5,6 +5,7 @@ from datetime import datetime
 import os
 import math
 import itertools
+import random
 
 # -------------------
 # CONFIG
@@ -50,8 +51,8 @@ bets_df = load_or_create_csv(BETS_LOG, BETS_COLS)
 # -------------------
 # APP HEADER
 # -------------------
-st.set_page_config(layout="wide", page_title="Sports Betting Assistant v2.3")
-st.title("Sports Betting Assistant v2.3 — Full Automation & Tracking")
+st.set_page_config(layout="wide", page_title="Sports Betting Assistant v2.4")
+st.title("Sports Betting Assistant v2.4 — Full Automation, Cross-Sport & Tracking")
 
 # -------------------
 # SIDEBAR SETTINGS
@@ -114,7 +115,7 @@ def calc_margin(p_home, p_away):
 # -------------------
 # BUILD RECOMMENDATIONS
 # -------------------
-def build_recommendations(games):
+def build_recommendations(games, sport_choice):
     recs = []
     for i, game in enumerate(games):
         try:
@@ -124,7 +125,7 @@ def build_recommendations(games):
             game_time = datetime.fromisoformat(game["commence_time"].replace("Z","+00:00"))
 
             # Example stadium coords (replace with real coordinates if available)
-            lat, lon = 40.0, -75.0
+            lat, lon = 40.0, -75.0, 
             weather_str, temp, wind, desc = fetch_weather(lat, lon)
 
             bookmakers = game.get("bookmakers", [])
@@ -190,7 +191,7 @@ def build_recommendations(games):
                 if bet_type in bet_type_filter and edge_pct >= min_edge_pct:
                     stake = bankroll * fractional_kelly * max(0, edges[best_key])
                     recs.append({
-                        "record_id": f"{i}_{int(datetime.utcnow().timestamp())}",
+                        "record_id": f"{sport_choice}_{i}_{int(datetime.utcnow().timestamp())}",
                         "timestamp": datetime.utcnow(),
                         "sport": sport_choice,
                         "week": week,
@@ -216,7 +217,7 @@ def build_recommendations(games):
 # FETCH & BUILD
 # -------------------
 games = fetch_odds(SPORTS[sport_choice])
-recs_df = build_recommendations(games) if games else pd.DataFrame(columns=BETS_COLS)
+recs_df = build_recommendations(games, sport_choice) if games else pd.DataFrame(columns=BETS_COLS)
 bets_df = pd.concat([bets_df, recs_df]).drop_duplicates(subset=["record_id"], keep="first").reset_index(drop=True)
 
 # -------------------
@@ -265,7 +266,38 @@ else:
     st.write("No parlays available with current settings.")
 
 # -------------------
-# DISPLAY
+# CROSS-SPORT RANDOM PARLAYS
+# -------------------
+st.subheader("Random Cross-Sport Parlays (MLB + NCAA + NFL)")
+
+cross_bets = []
+for s in SPORTS.keys():
+    sport_bets = bets_df[(bets_df["status"]=="PENDING") & (bets_df["sport"]==s) & (bets_df["edge_pct"]>=2)]
+    if not sport_bets.empty:
+        cross_bets.append(sport_bets.sample(min(2,len(sport_bets))))
+
+if cross_bets:
+    cross_bets_df = pd.concat(cross_bets).reset_index(drop=True)
+    random_parlays = []
+    for _ in range(5):
+        combo = cross_bets_df.sample(min(3,len(cross_bets_df)))
+        selections = combo["selection"].tolist()
+        matchups = combo["matchup"].tolist()
+        expected_edge = 1
+        for val in combo["edge_pct"]:
+            expected_edge *= val/100
+        expected_edge *= 100
+        random_parlays.append({
+            "Parlay": " + ".join(selections),
+            "Games": " + ".join(matchups),
+            "Expected Edge %": round(expected_edge,2)
+        })
+    st.dataframe(pd.DataFrame(random_parlays), use_container_width=True)
+else:
+    st.write("Not enough high-edge bets to create cross-sport parlays yet.")
+
+# -------------------
+# DISPLAY W/L TABLE
 # -------------------
 st.header(f"{sport_choice} Bets Overview")
 st.dataframe(bets_df.style.apply(style_row, axis=1), use_container_width=True)
