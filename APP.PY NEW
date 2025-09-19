@@ -1,10 +1,10 @@
+# sports_betting_assistant.py
 import random
 from itertools import combinations
-import tkinter as tk
-from tkinter import ttk, scrolledtext
+import streamlit as st
 
 # ------------------------
-# Data Setup
+# 1️⃣ Data Setup
 # ------------------------
 NFL_games = [
     {"team1": "Cowboys", "team2": "Eagles", "ml1": +180, "ml2": -200, "spread1": -3, "spread2": +3, "ou": 45.5},
@@ -28,7 +28,7 @@ Fantasy_NFL_players = [
 ]
 
 # ------------------------
-# Functions
+# 2️⃣ Functions
 # ------------------------
 def calculate_probability(ml):
     return 100 / (ml + 100) if ml > 0 else -ml / (-ml + 100)
@@ -40,7 +40,7 @@ def calculate_parlay_payout(parlay, stake=100):
             odds = pick["value"]
             total_multiplier *= (odds / 100 + 1) if odds > 0 else (100 / -odds + 1)
         else:
-            total_multiplier *= 1.91  # Spread/OU assumed -110
+            total_multiplier *= 1.91  # Spread/OU standard -110
     return round(stake * total_multiplier, 2)
 
 def select_pick(game):
@@ -91,68 +91,37 @@ def generate_fantasy_recommendations(players):
     return recommendations
 
 # ------------------------
-# GUI Setup
+# 3️⃣ Streamlit Dashboard
 # ------------------------
-def run_dashboard():
-    stake = float(stake_entry.get())
-    num_random = int(random_entry.get())
-    display_count = int(display_entry.get())
+st.title("🏈 Sports Betting Assistant v2.5")
 
+stake = st.number_input("Stake per Parlay ($):", min_value=1, value=100, step=10)
+num_random = st.number_input("Number of Random Cross-Sport Parlays:", min_value=1, value=5)
+display_count = st.number_input("Number of Top Recommended Parlays to Display:", min_value=1, value=5)
+
+if st.button("Generate Dashboard"):
     all_games = NFL_games + NCAA_games + MLB_games
-    output_box.delete('1.0', tk.END)
 
     # Recommended Parlays
     recommended = generate_recommended_parlays(all_games, stake=stake, display_count=display_count)
-    output_box.insert(tk.END, "=== Recommended Parlays ===\n")
+    st.subheader("✅ Recommended Parlays")
     for idx, p in enumerate(recommended[:display_count]):
-        output_box.insert(tk.END, f"Parlay {idx+1}:\n")
+        st.markdown(f"**Parlay {idx+1}:**")
         for pick in p["parlay"]:
-            output_box.insert(tk.END, f"  {pick['type']} | {pick.get('team','')} | {pick['value']}\n")
-        output_box.insert(tk.END, f"  Potential Payout: ${p['payout']}\n\n")
+            st.write(f"{pick['type']} | {pick.get('team','')} | {pick['value']}")
+        st.write(f"**Potential Payout:** ${p['payout']}\n")
 
     # Random Cross-Sport Parlays
     random_parlays = generate_random_cross_sport_parlays(NFL_games, NCAA_games, MLB_games, num_parlays=num_random, stake=stake)
-    output_box.insert(tk.END, "=== Random Cross-Sport Parlays ===\n")
+    st.subheader("🎲 Random Cross-Sport Parlays")
     for idx, p in enumerate(random_parlays):
-        output_box.insert(tk.END, f"Parlay {idx+1}:\n")
+        st.markdown(f"**Parlay {idx+1}:**")
         for pick in p["parlay"]:
-            output_box.insert(tk.END, f"  {pick['type']} | {pick.get('team','')} | {pick['value']}\n")
-        output_box.insert(tk.END, f"  Potential Payout: ${p['payout']}\n\n")
+            st.write(f"{pick['type']} | {pick.get('team','')} | {pick['value']}")
+        st.write(f"**Potential Payout:** ${p['payout']}\n")
 
     # Fantasy NFL Recommendations
     fantasy_recs = generate_fantasy_recommendations(Fantasy_NFL_players)
-    output_box.insert(tk.END, "=== Fantasy NFL Recommendations ===\n")
+    st.subheader("🏆 Fantasy NFL Recommendations")
     for f in fantasy_recs:
-        output_box.insert(tk.END, f"{f['player']} | {f['stat']} {f['projection']} | {f['recommendation']}\n")
-
-# ------------------------
-# Tkinter Widgets
-# ------------------------
-root = tk.Tk()
-root.title("Sports Betting Assistant v2.5")
-
-frame = ttk.Frame(root, padding="10")
-frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-
-ttk.Label(frame, text="Stake ($):").grid(row=0, column=0, sticky=tk.W)
-stake_entry = ttk.Entry(frame)
-stake_entry.grid(row=0, column=1)
-stake_entry.insert(0, "100")
-
-ttk.Label(frame, text="Number of Random Parlays:").grid(row=1, column=0, sticky=tk.W)
-random_entry = ttk.Entry(frame)
-random_entry.grid(row=1, column=1)
-random_entry.insert(0, "5")
-
-ttk.Label(frame, text="Top Recommended Parlays to Display:").grid(row=2, column=0, sticky=tk.W)
-display_entry = ttk.Entry(frame)
-display_entry.grid(row=2, column=1)
-display_entry.insert(0, "5")
-
-run_button = ttk.Button(frame, text="Generate Dashboard", command=run_dashboard)
-run_button.grid(row=3, column=0, columnspan=2, pady=10)
-
-output_box = scrolledtext.ScrolledText(frame, width=80, height=30)
-output_box.grid(row=4, column=0, columnspan=2)
-
-root.mainloop()
+        st.write(f"{f['player']} | {f['stat']} {f['projection']} | {f['recommendation']}")
