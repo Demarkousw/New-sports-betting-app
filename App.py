@@ -1,7 +1,6 @@
-# ultimate_sports_betting_assistant.py
+# sports_betting_assistant_v2_5.py
 import random
 from itertools import combinations
-import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -126,8 +125,8 @@ def copy_button(parlay_text, key):
 # ------------------------
 # Streamlit Dashboard
 # ------------------------
-st.set_page_config(page_title="Ultimate Sports Betting Assistant", layout="wide")
-st.title("🏈 Ultimate Sports Betting Assistant")
+st.set_page_config(page_title="Sports Betting Assistant v2.5", layout="wide")
+st.title("🏈 Sports Betting Assistant v2.5")
 
 # Inputs
 stake = st.number_input("Stake per Parlay ($):", min_value=1, value=100, step=10)
@@ -136,69 +135,32 @@ display_count = st.number_input("Top Recommended Parlays to Display:", min_value
 
 st.markdown("---")
 
-# Tabs for sections
-tabs = st.tabs(["All Games", "Recommended Parlays", "Random Cross-Sport Parlays", "Fantasy NFL", "Win/Loss Tracker"])
+# Recommended Parlays
+if st.button("Generate Recommended Parlays"):
+    all_games = NFL_games + NCAA_games + MLB_games
+    recommended = generate_recommended_parlays(all_games, stake=stake, display_count=display_count)
+    st.subheader("✅ Recommended Parlays")
+    for idx, p in enumerate(recommended[:display_count]):
+        st.markdown(f"**Parlay {idx+1}:**", unsafe_allow_html=True)
+        st.markdown(format_parlay_html(p["parlay"]), unsafe_allow_html=True)
+        st.write(f"**Potential Payout:** ${p['payout']}")
+        copy_button(format_parlay_text(p["parlay"]), key=f"rec{idx}")
 
-# ------------------------
-# Tab 1: All Games
-with tabs[0]:
-    st.subheader("NFL Games")
-    st.table(pd.DataFrame(NFL_games))
-    st.subheader("NCAA Games")
-    st.table(pd.DataFrame(NCAA_games))
-    st.subheader("MLB Games")
-    st.table(pd.DataFrame(MLB_games))
+# Random Cross-Sport Parlays
+if st.button("Generate Random Cross-Sport Parlays"):
+    random_parlays = generate_random_cross_sport_parlays(NFL_games, NCAA_games, MLB_games, num_parlays=num_random, stake=stake)
+    st.subheader("🎲 Random Cross-Sport Parlays")
+    for idx, p in enumerate(random_parlays):
+        st.markdown(f"**Parlay {idx+1}:**", unsafe_allow_html=True)
+        st.markdown(format_parlay_html(p["parlay"]), unsafe_allow_html=True)
+        st.write(f"**Potential Payout:** ${p['payout']}")
+        copy_button(format_parlay_text(p["parlay"]), key=f"rand{idx}")
 
-# ------------------------
-# Tab 2: Recommended Parlays
-with tabs[1]:
-    if st.button("Generate Recommended Parlays", key="rec"):
-        all_games = NFL_games + NCAA_games + MLB_games
-        recommended = generate_recommended_parlays(all_games, stake=stake, display_count=display_count)
-        st.subheader("✅ Recommended Parlays")
-        for idx, p in enumerate(recommended[:display_count]):
-            st.markdown(f"**Parlay {idx+1}:**", unsafe_allow_html=True)
-            st.markdown(format_parlay_html(p["parlay"]), unsafe_allow_html=True)
-            st.write(f"**Potential Payout:** ${p['payout']}")
-            copy_button(format_parlay_text(p["parlay"]), key=f"rec{idx}")
-
-# ------------------------
-# Tab 3: Random Cross-Sport Parlays
-with tabs[2]:
-    if st.button("Generate Random Cross-Sport Parlays", key="rand"):
-        random_parlays = generate_random_cross_sport_parlays(NFL_games, NCAA_games, MLB_games, num_parlays=num_random, stake=stake)
-        st.subheader("🎲 Random Cross-Sport Parlays")
-        for idx, p in enumerate(random_parlays):
-            st.markdown(f"**Parlay {idx+1}:**", unsafe_allow_html=True)
-            st.markdown(format_parlay_html(p["parlay"]), unsafe_allow_html=True)
-            st.write(f"**Potential Payout:** ${p['payout']}")
-            copy_button(format_parlay_text(p["parlay"]), key=f"rand{idx}")
-
-# ------------------------
-# Tab 4: Fantasy NFL
-with tabs[3]:
-    if st.button("Generate Fantasy NFL Recommendations", key="fantasy"):
-        fantasy_recs = generate_fantasy_recommendations(Fantasy_NFL_players)
-        st.subheader("🏆 Fantasy NFL Recommendations")
-        for f in fantasy_recs:
-            color = "green" if f["recommendation"]=="Over" else "red"
-            st.markdown(f"<span style='color:{color}'>{f['player']} | {f['stat']} {f['projection']} | {f['recommendation']}</span>", unsafe_allow_html=True)
-
-# ------------------------
-# Tab 5: Win/Loss Tracker
-with tabs[4]:
-    st.subheader("Parlay Win/Loss Tracker")
-    if "tracker" not in st.session_state:
-        st.session_state["tracker"] = pd.DataFrame(columns=["Parlay", "Stake", "Payout", "Result"])
-    st.dataframe(st.session_state["tracker"], use_container_width=True)
-    
-    st.markdown("**Add Parlay Result:**")
-    parlay_input = st.text_area("Parlay Text")
-    stake_input = st.number_input("Stake ($)", min_value=1, value=100, step=10, key="tracker_stake")
-    payout_input = st.number_input("Potential Payout ($)", min_value=1, value=100, step=10, key="tracker_payout")
-    result_input = st.selectbox("Result", ["Win", "Loss"], key="tracker_result")
-    
-    if st.button("Add Result", key="add_result"):
-        new_entry = {"Parlay": parlay_input, "Stake": stake_input, "Payout": payout_input, "Result": result_input}
-        st.session_state["tracker"] = pd.concat([st.session_state["tracker"], pd.DataFrame([new_entry])], ignore_index=True)
-        st.success("Result added!")
+# Fantasy NFL Recommendations
+if st.button("Generate Fantasy NFL Recommendations"):
+    fantasy_recs = generate_fantasy_recommendations(Fantasy_NFL_players)
+    st.subheader("🏆 Fantasy NFL Recommendations")
+    for f in fantasy_recs:
+        color = "green" if f["recommendation"]=="Over" else "red"
+        st.markdown(f"<span style='color:{color}'>{f['player']} | {f['stat']} {f['projection']} | {f['recommendation']}</span>", unsafe_allow_html=True)
+        
