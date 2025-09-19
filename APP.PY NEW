@@ -1,0 +1,66 @@
+import streamlit as st
+import pandas as pd
+import requests
+from datetime import datetime
+
+st.title("NFL Betting App — Live Odds Test")
+
+# --- Settings ---
+bankroll = st.sidebar.number_input("Bankroll ($)", min_value=0, value=1000)
+fractional_kelly = st.sidebar.slider("Fractional Kelly", 0.1, 1.0, 0.5)
+
+# --- Fetch NFL Odds ---
+API_KEY = "8a264564e3a5d2a556d475e547e1c417"
+SPORT = "americanfootball_nfl"
+
+st.info("Fetching upcoming NFL games...")
+
+response = requests.get(
+    f"https://api.the-odds-api.com/v4/sports/{SPORT}/odds",
+    params={"apiKey": API_KEY, "regions": "us", "markets": "spreads,totals,headtohead"}
+)
+
+if response.status_code != 200:
+    st.error(f"Error fetching odds: {response.status_code}")
+    st.stop()
+
+data = response.json()
+
+# --- Build DataFrame for display ---
+games = []
+for game in data:
+    home = game['home_team']
+    away = game['away_team']
+    game_time = datetime.fromisoformat(game['commence_time'].replace("Z",""))
+    ml_home = game['bookmakers'][0]['markets'][0]['outcomes'][0]['price'] if game['bookmakers'] else None
+    ml_away = game['bookmakers'][0]['markets'][0]['outcomes'][1]['price'] if game['bookmakers'] else None
+    games.append({
+        "Home Team": home,
+        "Away Team": away,
+        "Game Time": game_time,
+        "Moneyline Home": ml_home,
+        "Moneyline Away": ml_away
+    })
+
+df = pd.DataFrame(games)
+st.subheader("Upcoming NFL Games")
+st.dataframe(df)
+
+# --- Simple Recommendation (Best Moneyline) ---
+recommendations = []
+for idx, row in df.iterrows():
+    if row["Moneyline Home"] and row["Moneyline Away"]:
+        if row["Moneyline Home"] > row["Moneyline Away"]:
+            selection = row["Home Team"]
+            opponent = row["Away Team"]
+        else:
+            selection = row["Away Team"]
+            opponent = row["Home Team"]
+        recommendations.append({
+            "Matchup": f"{row['Away Team']} @ {row['Home Team']}",
+            "Selection": selection,
+            "Opponent": opponent
+        })
+
+st.subheader("Simple Recommended Bets")
+st.dataframe(pd.DataFrame(recommendations))
