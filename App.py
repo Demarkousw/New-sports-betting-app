@@ -4,6 +4,7 @@ import pandas as pd
 from datetime import datetime
 import os
 import math
+import itertools
 
 # -------------------
 # CONFIG
@@ -49,8 +50,8 @@ bets_df = load_or_create_csv(BETS_LOG, BETS_COLS)
 # -------------------
 # APP HEADER
 # -------------------
-st.set_page_config(layout="wide", page_title="Sports Betting Assistant v2.2")
-st.title("Sports Betting Assistant v2.2 — Weather & Full Tracking")
+st.set_page_config(layout="wide", page_title="Sports Betting Assistant v2.3")
+st.title("Sports Betting Assistant v2.3 — Full Automation & Tracking")
 
 # -------------------
 # SIDEBAR SETTINGS
@@ -234,6 +235,34 @@ def style_row(row):
         return ["background-color: #FFFF99; color: black"]*len(row)
     else:
         return ["background-color: #FF9999; color: black"]*len(row)
+
+# -------------------
+# RECOMMENDED PARLAYS (Pick-3 to Pick-8)
+# -------------------
+st.subheader("Recommended Parlays (Pick-3 to Pick-8)")
+top_bets = bets_df[bets_df["status"]=="PENDING"].sort_values(by="edge_pct", ascending=False).head(10)
+parlays = []
+
+for r in range(3,9):
+    for combo in itertools.combinations(top_bets.index, r):
+        selections = [top_bets.loc[i, "selection"] for i in combo]
+        matchups = [top_bets.loc[i, "matchup"] for i in combo]
+        expected_edge = 1
+        for i in combo:
+            expected_edge *= top_bets.loc[i, "edge_pct"] / 100
+        expected_edge *= 100
+        parlays.append({
+            "Parlay": " + ".join(selections),
+            "Games": " + ".join(matchups),
+            "Expected Edge %": round(expected_edge,2),
+            "Pick Count": r
+        })
+
+parlays_df = pd.DataFrame(parlays).sort_values(by="Expected Edge %", ascending=False)
+if not parlays_df.empty:
+    st.dataframe(parlays_df, use_container_width=True)
+else:
+    st.write("No parlays available with current settings.")
 
 # -------------------
 # DISPLAY
