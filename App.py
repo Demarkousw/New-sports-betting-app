@@ -122,7 +122,7 @@ def build_recommendations(games):
             week = game.get("week", None)
             game_time = datetime.fromisoformat(game["commence_time"].replace("Z","+00:00"))
 
-            # Example stadium coords (NFL) – replace with real coordinates if available
+            # Example stadium coords (replace with real coordinates if available)
             lat, lon = 40.0, -75.0
             weather_str, temp, wind, desc = fetch_weather(lat, lon)
 
@@ -231,30 +231,4 @@ def style_row(row):
 # DISPLAY
 # -------------------
 st.header(f"{sport_choice} Bets Overview")
-st.dataframe(bets_df.style.apply(style_row, axis=1), use_container_width=True)
-
-# -------------------
-# UPDATE PENDING BETS
-# -------------------
-pending = bets_df[bets_df["status"]=="PENDING"]
-if not pending.empty:
-    st.subheader("Update Pending Bets")
-    pending_opts = pending["record_id"].astype(str).tolist()
-    chosen_pending = st.multiselect("Select pending bets to mark", pending_opts)
-    result_choice = st.radio("Mark as", ["WON","LOST"], index=1)
-    if st.button("Apply Result"):
-        for rid in chosen_pending:
-            idx = bets_df[bets_df["record_id"].astype(str)==rid].index
-            if len(idx)==0: continue
-            bets_df.loc[idx,"status"] = result_choice
-        bets_df.to_csv(BETS_LOG,index=False)
-        st.success("Updated pending bets.")
-
-# -------------------
-# ALL-TIME RECORD
-# -------------------
-if not bets_df.empty:
-    wins = len(bets_df[bets_df["status"]=="WON"])
-    losses = len(bets_df[bets_df["status"]=="LOST"])
-    st.subheader("All-Time Record")
-    st.write(f"Wins: {wins} | Losses: {losses} | Total Bets
+st.dataframe(bets_df.style.apply(style_row, axis=1), use
