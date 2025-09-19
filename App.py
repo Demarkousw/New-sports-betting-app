@@ -353,4 +353,4 @@ fantasy_df = fetch_nfl_fantasy()
 if not fantasy_df.empty:
     st.dataframe(fantasy_df.sort_values("Fantasy Points", ascending=False).head(50), use_container_width=True)
 else:
-    st.write("No fantasy data available.")
+    st.write("No fantasy data available.") 
