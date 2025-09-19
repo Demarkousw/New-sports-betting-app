@@ -229,3 +229,19 @@ if all_games:
 # COLOR-CODING
 # -------------------
 def style
+# -------------------
+# COLOR-CODING
+# -------------------
+def style_row(row):
+    edge = row["edge_pct"]
+    status = row["status"]
+    if status == "WON":
+        return ["background-color: #ADD8E6; color: black"] * len(row)
+    elif status == "LOST":
+        return ["background-color: #D3D3D3; color: black"] * len(row)
+    elif edge >= 5:
+        return ["background-color: #9AFF99; color: black"] * len(row)
+    elif edge >= 2:
+        return ["background-color: #FFFF99; color: black"] * len(row)
+    else:
+        return ["background-color: #FF9999; color: black"] * len(row)
