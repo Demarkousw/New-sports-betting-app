@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 
-st.title("Full Sports Betting App — Self-Contained Version")
+st.title("Full Sports Betting App — All Games + Recommendations")
 
 # --- Sidebar Settings ---
 bankroll = st.sidebar.number_input("Bankroll ($)", min_value=0, value=1000)
@@ -16,8 +16,6 @@ historical_games = pd.DataFrame([
     {"home_team": "Jets", "away_team": "Patriots", "home_score": 17, "away_score": 20},
     {"home_team": "Cowboys", "away_team": "Giants", "home_score": 28, "away_score": 21},
     {"home_team": "Packers", "away_team": "Bears", "home_score": 21, "away_score": 17},
-    {"home_team": "Ravens", "away_team": "Steelers", "home_score": 24, "away_score": 20},
-    {"home_team": "Seahawks", "away_team": "49ers", "home_score": 27, "away_score": 23},
 ])
 
 # --- Initialize Elo Ratings ---
@@ -41,7 +39,7 @@ for idx, row in historical_games.iterrows():
     elo_ratings[home] = home_elo
     elo_ratings[away] = away_elo
 
-# --- Full Week of Sample Upcoming Games ---
+# --- Full Week of Upcoming Games with Editable Odds ---
 upcoming_games = pd.DataFrame([
     {"week": 1, "home_team": "Bills", "away_team": "Jets", "game_time": "2025-09-21 13:00",
      "moneyline_home": -150, "moneyline_away": 130, "spread_home": -7, "spread_away": 7, "total_points": 45},
@@ -51,26 +49,22 @@ upcoming_games = pd.DataFrame([
      "moneyline_home": -140, "moneyline_away": 120, "spread_home": -6, "spread_away": 6, "total_points": 44},
     {"week": 1, "home_team": "Packers", "away_team": "Bears", "game_time": "2025-09-22 13:00",
      "moneyline_home": -130, "moneyline_away": 110, "spread_home": -4, "spread_away": 4, "total_points": 41},
-    {"week": 1, "home_team": "Ravens", "away_team": "Steelers", "game_time": "2025-09-22 16:25",
-     "moneyline_home": -125, "moneyline_away": 105, "spread_home": -3, "spread_away": 3, "total_points": 40},
-    {"week": 1, "home_team": "Seahawks", "away_team": "49ers", "game_time": "2025-09-22 20:15",
-     "moneyline_home": -135, "moneyline_away": 115, "spread_home": -5, "spread_away": 5, "total_points": 43},
-    {"week": 1, "home_team": "Falcons", "away_team": "Saints", "game_time": "2025-09-23 13:00",
-     "moneyline_home": -110, "moneyline_away": 100, "spread_home": -2, "spread_away": 2, "total_points": 39},
-    {"week": 1, "home_team": "Broncos", "away_team": "Raiders", "game_time": "2025-09-23 16:25",
-     "moneyline_home": -145, "moneyline_away": 125, "spread_home": -6, "spread_away": 6, "total_points": 46},
 ])
 
 upcoming_games["game_time"] = pd.to_datetime(upcoming_games["game_time"])
 
+# --- Show All Games First ---
+st.subheader("All Upcoming Games")
+st.dataframe(upcoming_games)
+
 # --- Week Filter ---
 weeks = sorted(upcoming_games["week"].unique())
 selected_week = st.sidebar.selectbox("Select Week", weeks)
-upcoming_games = upcoming_games[upcoming_games["week"] == selected_week]
+week_games = upcoming_games[upcoming_games["week"] == selected_week]
 
 # --- Calculate Recommendations ---
 recommendations = []
-for idx, row in upcoming_games.iterrows():
+for idx, row in week_games.iterrows():
     home = row["home_team"]
     away = row["away_team"]
     home_elo = elo_ratings.get(home, base_elo)
@@ -121,9 +115,6 @@ for idx, row in upcoming_games.iterrows():
     recommendations.append({
         "Week": row["week"],
         "Matchup": f"{away} @ {home}",
-        "Home": home,
-        "Away": away,
-        "Time": row["game_time"].strftime("%Y-%m-%d %H:%M"),
         "Selection": selection,
         "Opponent": opponent,
         "Best Bet": display_bet,
@@ -132,17 +123,6 @@ for idx, row in upcoming_games.iterrows():
     })
 
 # --- Display Recommendations ---
+st.subheader("Recommended Bets")
 rec_df = pd.DataFrame(recommendations)
-st.subheader(f"Recommended Bets — Week {selected_week}")
 st.dataframe(rec_df)
-
-# --- Log Bets ---
-log_file = "bets_log.csv"
-try:
-    existing_log = pd.read_csv(log_file)
-    updated_log = pd.concat([existing_log, rec_df])
-except FileNotFoundError:
-    updated_log = rec_df
-
-updated_log.to_csv(log_file, index=False)
-st.success(f"{len(rec_df)} bets logged to {log_file}")
