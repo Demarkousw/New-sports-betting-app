@@ -1,4 +1,4 @@
-# App.py - Sports Betting Assistant v2.6 (Fixed)
+# App.py - Sports Betting Assistant v2.6 (Original, No Fantasy)
 import streamlit as st
 import requests
 import pandas as pd
@@ -14,7 +14,6 @@ from functools import lru_cache
 # -------------------
 API_KEY_ODDS = "c5eece64b53f2c9622543faf5861555d"      # Odds API key
 API_KEY_WEATHER = "5ec258afff830598e45caad47e3edb8e"   # OpenWeatherMap key
-# Sleeper = public, no key needed
 
 # -------------------
 # SPORTS CONFIG
@@ -28,7 +27,7 @@ REGIONS = "us"
 MARKETS = ["h2h","spreads","totals"]
 
 # -------------------
-# BETS LOG (safer loader)
+# BETS LOG
 # -------------------
 BETS_LOG = "bets_log.csv"
 BETS_COLS = [
@@ -41,7 +40,6 @@ def load_or_create_csv(path, cols):
     if os.path.exists(path):
         try:
             df = pd.read_csv(path)
-            # Ensure all required columns exist
             for c in cols:
                 if c not in df.columns:
                     df[c] = pd.NA
@@ -57,7 +55,7 @@ bets_df = load_or_create_csv(BETS_LOG, BETS_COLS)
 # STREAMLIT UI
 # -------------------
 st.set_page_config(layout="wide", page_title="Sports Betting Assistant v2.6")
-st.title("Sports Betting Assistant v2.6 — All-in-One Betting + Fantasy")
+st.title("Sports Betting Assistant v2.6 — Betting Assistant")
 
 # Sidebar
 st.sidebar.header("Settings")
@@ -69,7 +67,6 @@ bet_type_filter = st.sidebar.multiselect("Bet types", ["Moneyline","Spread","Tot
 if "All" in bet_type_filter:
     bet_type_filter = ["Moneyline","Spread","Totals"]
 use_weather = st.sidebar.checkbox("Weather adjustments", value=True)
-fantasy_mode = st.sidebar.selectbox("Fantasy scoring", ["PPR","Half PPR","Standard"], index=0)
 
 # -------------------
 # HELPERS
@@ -88,7 +85,6 @@ def calc_margin_from_probs(p_home, p_away):
     return math.log(p_home/(1-p_home)) - math.log(p_away/(1-p_away))
 
 def fetch_odds_for_sport(sport_key):
-    """Fetch odds and gracefully handle missing markets."""
     url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
     params = {"apiKey":API_KEY_ODDS,"regions":REGIONS,"markets":",".join(MARKETS),"oddsFormat":"decimal"}
     try:
@@ -130,7 +126,6 @@ def build_recs(game,sport_name):
             first = bookmakers[0]
             for m in first.get("markets",[]):
                 markets[m["key"]] = m.get("outcomes",[])
-        # default
         p_home,p_away=0.5,0.5
         if "h2h" in markets and len(markets["h2h"])>=2:
             o0,o1=markets["h2h"][0]["price"],markets["h2h"][1]["price"]
@@ -179,37 +174,6 @@ def build_all_recs():
             r=build_recs(g,s)
             if r: rows.append(r)
     return pd.DataFrame(rows) if rows else pd.DataFrame(columns=BETS_COLS)
-
-# -------------------
-# FANTASY SECTION (always shows table)
-# -------------------
-def fetch_sleeper_players():
-    try:
-        r=requests.get("https://api.sleeper.app/v1/players/nfl",timeout=15)
-        r.raise_for_status()
-        return r.json()
-    except:
-        return {}
-
-def build_fantasy_projections():
-    players=fetch_sleeper_players()
-    if not players:  # fallback baseline if empty
-        return pd.DataFrame([
-            {"Player":"Baseline QB","Team":"N/A","Position":"QB","ProjPts":15},
-            {"Player":"Baseline RB","Team":"N/A","Position":"RB","ProjPts":10},
-            {"Player":"Baseline WR","Team":"N/A","Position":"WR","ProjPts":9},
-            {"Player":"Baseline TE","Team":"N/A","Position":"TE","ProjPts":6}
-        ])
-    rows=[]
-    for pid,p in players.items():
-        pos=p.get("position")
-        if pos not in("QB","RB","WR","TE"): continue
-        name=p.get("full_name",pid); team=p.get("team","FA")
-        proj={"QB":15,"RB":10,"WR":9,"TE":6}
-        rows.append({"Player":name,"Team":team,"Position":pos,"ProjPts":proj.get(pos,7)})
-    df=pd.DataFrame(rows)
-    df["LastUpdated"]=datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
-    return df.sort_values("ProjPts",ascending=False).head(50)
 
 # -------------------
 # DISPLAY
@@ -263,29 +227,22 @@ losses=len(bets_df[bets_df["status"]=="LOST"])
 st.subheader("All-Time Record")
 st.write(f"Wins: {wins} | Losses: {losses} | Total: {wins+losses}")
 
-# Fantasy
-st.subheader("Fantasy — NFL Players")
-fantasy_df=build_fantasy_projections()
-st.dataframe(fantasy_df,use_container_width=True)
-
-st.subheader("Fantasy — NCAA Teams (value est.)")
+# NCAA/MLB placeholders
+st.subheader("NCAA Football — Matchups (placeholder)")
 st.dataframe(bets_df[bets_df["sport"]=="NCAA Football"][["matchup","weather"]])
 
-st.subheader("Fantasy — MLB Teams (value est.)")
+st.subheader("MLB — Matchups (placeholder)")
 st.dataframe(bets_df[bets_df["sport"]=="MLB"][["matchup","weather"]])
 
 # Instructions
 with st.expander("How to Use"):
     st.markdown("""
-- **Odds & Parlays**: Auto-pulled for NFL, NCAA, MLB. Will fallback gracefully if certain markets aren’t available.
+- **Odds & Parlays**: Auto-pulled for NFL, NCAA, MLB.
 - **Colors**: Green = strong, Yellow = medium, Red = weak, Blue = won, Gray = lost.
 - **Update Pending Bets**: Use this box to mark bets WON or LOST.
 - **Record**: Tracks your all-time win/loss record.
-- **Fantasy**: 
-  - NFL = top projected players (baseline always shown, Sleeper when available).
-  - NCAA/MLB = team value placeholders (upgrade-ready).
+- **NCAA/MLB**: Currently placeholders (show matchups/weather only).
 - **APIs**:
   - Odds API: https://the-odds-api.com
   - Weather API: https://openweathermap.org
-  - Sleeper API: https://docs.sleeper.com
 """)
