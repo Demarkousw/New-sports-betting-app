@@ -111,7 +111,6 @@ def build_recommendations(games, sport_name):
             # --- WEATHER ADJUSTMENTS ---
             weather_str = "N/A"
             if use_weather:
-                # placeholder stadium coords
                 lat, lon = 40.0, -75.0
                 weather_str, temp, wind, desc = fetch_weather(lat, lon)
                 if wind and wind > 15:
@@ -166,12 +165,11 @@ if all_games:
     bets_df = pd.concat([bets_df, new_df]).drop_duplicates(subset=["record_id"]).reset_index(drop=True)
 
 # -------------------
-# STYLE FUNCTION
+# STYLE FUNCTION (SAFE)
 # -------------------
 def style_row(row):
-    status = row.get("status","")
-    if pd.isna(status): status=""
-    edge = row.get("edge_pct",0)
+    status = str(row.get("status",""))
+    edge = row.get("edge_pct",0) if not pd.isna(row.get("edge_pct",0)) else 0
     if status=="WON": return ["background-color:#ADD8E6"]*len(row)
     if status=="LOST": return ["background-color:#D3D3D3"]*len(row)
     if edge>=5: return ["background-color:#9AFF99"]*len(row)
@@ -186,7 +184,7 @@ if not bets_df.empty:
     st.dataframe(bets_df.style.apply(style_row, axis=1), use_container_width=True)
 
 # -------------------
-# RANDOM PICK 3-8 CROSS-SPORT PARLAYS
+# RANDOM PICK 3-8 CROSS-SPORT PARLAYS (SAFE)
 # -------------------
 st.subheader("Random Pick 3-8 Cross-Sport Parlays")
 eligible_bets = bets_df[(bets_df["status"]=="PENDING") & (bets_df["edge_pct"]>=2)]
@@ -194,11 +192,11 @@ if eligible_bets.empty:
     st.write("Not enough bets to create parlays.")
 else:
     for pick_count in range(3,9):
-        if len(eligible_bets)<pick_count: continue
         st.markdown(f"**Pick-{pick_count} Parlays**")
         parlays_list=[]
         for _ in range(5):
-            sample_count = min(pick_count,len(eligible_bets))
+            # Sample at most available bets safely
+            sample_count = min(pick_count, len(eligible_bets))
             combo = eligible_bets.sample(sample_count)
             expected_edge = 1
             for val in combo["edge_pct"].fillna(0):
