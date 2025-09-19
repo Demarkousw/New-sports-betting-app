@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 
-st.title("Self-Contained Sports Betting App")
+st.title("Full Sports Betting App — Self-Contained Version")
 
 # --- Sidebar Settings ---
 bankroll = st.sidebar.number_input("Bankroll ($)", min_value=0, value=1000)
@@ -10,12 +10,14 @@ fractional_kelly = st.sidebar.slider("Fractional Kelly", 0.1, 1.0, 0.5)
 base_elo = st.sidebar.number_input("Base Elo", 1000, 2000, 1500)
 k_factor = st.sidebar.number_input("K-Factor", 1, 50, 20)
 
-# --- Sample Historical Games ---
+# --- Sample Historical Games (for Elo) ---
 historical_games = pd.DataFrame([
     {"home_team": "Bills", "away_team": "Dolphins", "home_score": 31, "away_score": 24},
     {"home_team": "Jets", "away_team": "Patriots", "home_score": 17, "away_score": 20},
-    {"home_team": "Bills", "away_team": "Patriots", "home_score": 28, "away_score": 21},
-    {"home_team": "Jets", "away_team": "Dolphins", "home_score": 14, "away_score": 10},
+    {"home_team": "Cowboys", "away_team": "Giants", "home_score": 28, "away_score": 21},
+    {"home_team": "Packers", "away_team": "Bears", "home_score": 21, "away_score": 17},
+    {"home_team": "Ravens", "away_team": "Steelers", "home_score": 24, "away_score": 20},
+    {"home_team": "Seahawks", "away_team": "49ers", "home_score": 27, "away_score": 23},
 ])
 
 # --- Initialize Elo Ratings ---
@@ -39,13 +41,26 @@ for idx, row in historical_games.iterrows():
     elo_ratings[home] = home_elo
     elo_ratings[away] = away_elo
 
-# --- Sample Upcoming Games ---
+# --- Full Week of Sample Upcoming Games ---
 upcoming_games = pd.DataFrame([
     {"week": 1, "home_team": "Bills", "away_team": "Jets", "game_time": "2025-09-21 13:00",
-     "moneyline_home": -150, "moneyline_away": +130, "spread_home": -7, "spread_away": +7, "total_points": 45},
+     "moneyline_home": -150, "moneyline_away": 130, "spread_home": -7, "spread_away": 7, "total_points": 45},
     {"week": 1, "home_team": "Dolphins", "away_team": "Patriots", "game_time": "2025-09-21 16:25",
-     "moneyline_home": -120, "moneyline_away": +110, "spread_home": -3, "spread_away": +3, "total_points": 42},
+     "moneyline_home": -120, "moneyline_away": 110, "spread_home": -3, "spread_away": 3, "total_points": 42},
+    {"week": 1, "home_team": "Cowboys", "away_team": "Giants", "game_time": "2025-09-21 20:20",
+     "moneyline_home": -140, "moneyline_away": 120, "spread_home": -6, "spread_away": 6, "total_points": 44},
+    {"week": 1, "home_team": "Packers", "away_team": "Bears", "game_time": "2025-09-22 13:00",
+     "moneyline_home": -130, "moneyline_away": 110, "spread_home": -4, "spread_away": 4, "total_points": 41},
+    {"week": 1, "home_team": "Ravens", "away_team": "Steelers", "game_time": "2025-09-22 16:25",
+     "moneyline_home": -125, "moneyline_away": 105, "spread_home": -3, "spread_away": 3, "total_points": 40},
+    {"week": 1, "home_team": "Seahawks", "away_team": "49ers", "game_time": "2025-09-22 20:15",
+     "moneyline_home": -135, "moneyline_away": 115, "spread_home": -5, "spread_away": 5, "total_points": 43},
+    {"week": 1, "home_team": "Falcons", "away_team": "Saints", "game_time": "2025-09-23 13:00",
+     "moneyline_home": -110, "moneyline_away": 100, "spread_home": -2, "spread_away": 2, "total_points": 39},
+    {"week": 1, "home_team": "Broncos", "away_team": "Raiders", "game_time": "2025-09-23 16:25",
+     "moneyline_home": -145, "moneyline_away": 125, "spread_home": -6, "spread_away": 6, "total_points": 46},
 ])
+
 upcoming_games["game_time"] = pd.to_datetime(upcoming_games["game_time"])
 
 # --- Week Filter ---
