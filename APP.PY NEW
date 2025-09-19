@@ -8,14 +8,14 @@ import math
 # -------------------
 # CONFIG
 # -------------------
-API_KEY = "c5eece64b53f2c9622543faf5861555d"  # <-- Your valid key
+API_KEY = "c5eece64b53f2c9622543faf5861555d"  # Your valid key
 SPORTS = {
     "NFL": "americanfootball_nfl",
     "NCAA Football": "americanfootball_ncaaf",
     "MLB": "baseball_mlb"
 }
 REGIONS = "us"
-MARKETS = ["h2h", "spreads", "totals"]  # Fallback handled automatically
+MARKETS = ["h2h", "spreads", "totals"]
 
 BETS_LOG = "bets_log.csv"
 RESULTS_LOG = "results.csv"
@@ -47,8 +47,8 @@ results_df = load_or_create_csv(RESULTS_LOG, RESULTS_COLS)
 # -------------------
 # APP HEADER
 # -------------------
-st.set_page_config(layout="wide", page_title="Sports Betting Assistant v2.4")
-st.title("Sports Betting Assistant v2.4 — Full Automation & Tracking")
+st.set_page_config(layout="wide", page_title="Sports Betting Assistant v2.5")
+st.title("Sports Betting Assistant v2.5 — Full Automation & Tracking")
 
 # -------------------
 # SIDEBAR SETTINGS
@@ -147,86 +147,73 @@ def build_recommendations(games):
                 if bet_type in bet_type_filter and edge_pct >= min_edge_pct:
                     stake = bankroll * fractional_kelly * max(0, edges[best_key])
                     recs.append({
-                        "ID": f"{i}_{int(datetime.utcnow().timestamp())}",
-                        "Matchup": f"{away} @ {home}",
-                        "Game Time": game_time,
-                        "Bet Type": bet_type,
-                        "Selection": selection,
-                        "Opponent": opponent,
-                        "Edge %": round(edge_pct,2),
-                        "Stake $": round(stake,2),
-                        "Predicted Margin": round(predicted_margin,2)
+                        "record_id": f"{i}_{int(datetime.utcnow().timestamp())}",
+                        "timestamp": datetime.utcnow(),
+                        "sport": sport_choice,
+                        "matchup": f"{away} @ {home}",
+                        "game_time": game_time,
+                        "bet_type": bet_type,
+                        "selection": selection,
+                        "opponent": opponent,
+                        "edge_pct": round(edge_pct,2),
+                        "stake": round(stake,2),
+                        "predicted_margin": round(predicted_margin,2),
+                        "status": "PENDING"
                     })
         except:
             continue
     return pd.DataFrame(recs)
 
 # -------------------
-# DISPLAY RECOMMENDATIONS
+# FETCH AND BUILD
 # -------------------
 st.header(f"{sport_choice} Recommended Bets")
 games = fetch_odds(SPORTS[sport_choice])
-if not games:
-    st.warning("No odds data available. Check your API key or plan.")
-    st.stop()
+recs_df = build_recommendations(games) if games else pd.DataFrame(columns=BETS_COLS)
 
-recs_df = build_recommendations(games)
-if recs_df.empty:
-    st.write("No recommendations available.")
-else:
-    # Color-coded edges
-    def color_edges(val):
-        if val >= 5: return 'background-color: #9AFF99'
-        elif val >= 2: return 'background-color: #FFFF99'
-        else: return 'background-color: #FF9999'
-
-    styled = recs_df.style.applymap(color_edges, subset=["Edge %"])
-    st.dataframe(styled, use_container_width=True)
-    st.download_button("Download Recommendations CSV", data=recs_df.to_csv(index=False).encode('utf-8'), file_name="recommendations.csv", mime="text/csv")
-    st.info(f"Recommended unit size: ${bankroll * 0.02 * fractional_kelly:.2f}")
-
-# -------------------
-# BET TRACKER
-# -------------------
-st.header("Record & Track Bets")
+# Merge pending bets
 bets_df = load_or_create_csv(BETS_LOG,BETS_COLS)
-pending = bets_df[bets_df.get("status","PENDING")=="PENDING"] if not bets_df.empty else pd.DataFrame(columns=BETS_COLS)
+combined_df = pd.concat([recs_df, bets_df]).drop_duplicates(subset=["record_id"], keep="first").reset_index(drop=True)
 
-if not pending.empty:
-    st.subheader("Pending Bets")
-    st.dataframe(pending)
-    pending_opts = pending["record_id"].astype(str).tolist()
-    chosen_pending = st.multiselect("Select pending bets to mark", pending_opts)
-    result_choice = st.radio("Mark as", ["WON","LOST"],index=1)
-    if st.button("Apply Result"):
-        for rid in chosen_pending:
-            idx = bets_df[bets_df["record_id"].astype(str)==str(rid)].index
-            if len(idx) == 0: continue
-            bets_df.loc[idx,"status"] = result_choice
-        bets_df.to_csv(BETS_LOG,index=False)
-        st.success("Updated pending bets.")
-
-# -------------------
-# ALL-TIME RECORD
-# -------------------
+# Merge resolved results
 results_df = load_or_create_csv(RESULTS_LOG,RESULTS_COLS)
 if not results_df.empty:
-    wins = len(results_df[results_df["result"]=="WON"])
-    losses = len(results_df[results_df["result"]=="LOST"])
-    st.subheader("All-Time Record")
-    st.write(f"Wins: {wins} | Losses: {losses} | Total Bets: {wins+losses}")
-else:
-    st.write("No resolved bets yet.")
+    combined_df = combined_df.merge(results_df[["record_id","result"]], on="record_id", how="left")
+    combined_df["status"] = combined_df["result"].fillna(combined_df["status"])
+combined_df["result"] = combined_df["status"]
 
 # -------------------
-# INSTRUCTIONS
+# COLOR-CODING FUNCTION
 # -------------------
-with st.expander("Instructions"):
-    st.markdown("""
-1. Select a sport and adjust bankroll & settings.
-2. Recommended bets appear automatically (color-coded edges: green=strong, yellow=moderate, red=weak).
-3. Track bets by marking them pending and update as WON or LOST.
-4. Download CSVs for backup or offline review.
-5. Edge % and stake are calculated automatically.
-6. The app automatically handles free plan limitations — if spreads/totals aren’t available, it still gives recommendations.
-""")
+def style_df(row):
+    edge = row["edge_pct"]
+    if row["status"]=="WON":
+        return ["background-color: #ADD8E6"]*len(row)
+    elif row["status"]=="LOST":
+        return ["background-color: #D3D3D3"]*len(row)
+    elif edge >= 5:
+        return ["background-color: #9AFF99"]*len(row)
+    elif edge >= 2:
+        return ["background-color: #FFFF99"]*len(row)
+    else:
+        return ["background-color: #FF9999"]*len(row)
+
+st.dataframe(combined_df.style.apply(style_df, axis=1), use_container_width=True)
+
+# -------------------
+# TRACK PENDING BETS
+# -------------------
+pending = combined_df[combined_df["status"]=="PENDING"]
+if not pending.empty:
+    st.subheader("Update Pending Bets")
+    pending_opts = pending["record_id"].astype(str).tolist()
+    chosen_pending = st.multiselect("Select pending bets to mark", pending_opts)
+    result_choice = st.radio("Mark as", ["WON","LOST"], index=1)
+    if st.button("Apply Result"):
+        for rid in chosen_pending:
+            idx = combined_df[combined_df["record_id"].astype(str)==rid].index
+            if len(idx)==0: continue
+            combined_df.loc[idx,"status"] = result_choice
+            combined_df.loc[idx,"result"] = result_choice
+        combined_df.to_csv(BETS_LOG,index=False)
+       
